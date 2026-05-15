@@ -51,12 +51,11 @@ export async function POST(request: Request) {
       n: 1,
       size: '1024x1024',
       quality: 'standard',
-      response_format: 'b64_json',
     })
 
-    const imageData = response.data?.[0]?.b64_json
-    if (!imageData) throw new Error('이미지 데이터 없음')
-    return Response.json({ image: `data:image/png;base64,${imageData}` })
+    const imageUrl = response.data?.[0]?.url
+    if (!imageUrl) throw new Error('이미지 생성 실패')
+    return Response.json({ image: imageUrl })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '이미지 생성 실패'
     return Response.json({ error: message }, { status: 500 })
