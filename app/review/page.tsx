@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
@@ -14,12 +14,31 @@ type CardState = {
   newImage: string | null
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  A: 'A — 사물/장소', B: 'B — 직업/역할', C: 'C — 동사/감정', D: 'D — 자연/계절',
+}
+
+function parseLines(text: string, startIdx: number): Word[] {
+  return text.trim().split('\n')
+    .filter(l => l.trim())
+    .map((line, i) => {
+      const parts = line.split(/[|,\t]/).map(p => p.trim())
+      return { id: `WORD${String(startIdx + i + 1).padStart(3, '0')}`, en: parts[0] || '', ko: parts[1] || '', type: 'A' as const }
+    })
+    .filter(w => w.en && w.ko)
+}
+
 export default function ReviewPage() {
   const router = useRouter()
+  const fileRef = useRef<HTMLInputElement>(null)
   const [cards, setCards] = useState<CardState[]>([])
   const [expandedComment, setExpandedComment] = useState<number | null>(null)
   const [lightbox, setLightbox] = useState<number | null>(null)
   const [lightboxComment, setLightboxComment] = useState(false)
+  const [addPanel, setAddPanel] = useState(false)
+  const [addText, setAddText] = useState('')
+  const [addWords, setAddWords] = useState<Word[]>([])
+  const [addGenerating, setAddGenerating] = useState(false)
 
   useEffect(() => {
     const stored = localStorage.getItem('vocab-results')
@@ -108,6 +127,64 @@ export default function ReviewPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [lightbox, prevImage, nextImage, closeLightbox])
 
+  const parseAddText = () => {
+    const parsed = parseLines(addText, cards.length)
+    setAddWords(parsed)
+  }
+
+  const handleAddFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const text = ev.target?.result as string
+      setAddText(text.trim())
+      setAddWords(parseLines(text, cards.length))
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  const updateAddType = (idx: number, type: Word['type']) => {
+    setAddWords(prev => prev.map((w, i) => i === idx ? { ...w, type } : w))
+  }
+
+  const generateAdd = async () => {
+    if (addWords.length === 0) return
+    setAddGenerating(true)
+    const newCards: CardState[] = addWords.map(w => ({
+      result: { word: w, image: null, error: null },
+      status: 'pending', comment: '', regenerating: true, newImage: null,
+    }))
+    setCards(prev => [...prev, ...newCards])
+    setAddPanel(false)
+    setAddText('')
+    setAddWords([])
+
+    const startIdx = cards.length
+    for (let i = 0; i < addWords.length; i++) {
+      const word = addWords[i]
+      try {
+        const r = await fetch('/api/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ word, type: word.type }),
+        })
+        const data = await r.json()
+        setCards(prev => prev.map((c, ci) =>
+          ci === startIdx + i
+            ? { ...c, regenerating: false, result: { ...c.result, image: data.image || null, error: data.error || null } }
+            : c
+        ))
+      } catch {
+        setCards(prev => prev.map((c, ci) =>
+          ci === startIdx + i ? { ...c, regenerating: false, result: { ...c.result, error: '생성 실패' } } : c
+        ))
+      }
+    }
+    setAddGenerating(false)
+  }
+
   const approvedCount = cards.filter(c => c.status === 'approved').length
   const pendingCount = cards.filter(c => c.status === 'pending').length
   const lbCard = lightbox !== null ? cards[lightbox] : null
@@ -129,14 +206,85 @@ export default function ReviewPage() {
               승인 {approvedCount} · 대기 {pendingCount} · 총 {cards.length}개
             </p>
           </div>
-          <button
-            onClick={downloadApproved}
-            disabled={approvedCount === 0}
-            className="px-5 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            승인된 이미지 다운로드 ({approvedCount})
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setAddPanel(v => !v)}
+              className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+            >
+              + 단어 추가 생성
+            </button>
+            <button
+              onClick={downloadApproved}
+              disabled={approvedCount === 0}
+              className="px-5 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              다운로드 ({approvedCount})
+            </button>
+          </div>
         </div>
+
+        {/* Add panel */}
+        {addPanel && (
+          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-semibold text-gray-900 text-sm">단어 추가 생성</h3>
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+              >
+                파일 업로드 (CSV / TXT)
+              </button>
+              <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleAddFile} />
+            </div>
+            <p className="text-xs text-gray-400 mb-3">형식: <code className="bg-gray-100 px-1 rounded">영어 | 한국어</code></p>
+            <textarea
+              value={addText}
+              onChange={e => setAddText(e.target.value)}
+              placeholder={`jacket | 재킷\nhat | 모자`}
+              rows={4}
+              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none mb-3"
+            />
+            {addWords.length === 0 ? (
+              <button
+                onClick={parseAddText}
+                disabled={!addText.trim()}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-40 transition-colors"
+              >
+                단어 확인
+              </button>
+            ) : (
+              <>
+                <div className="space-y-1 mb-3">
+                  {addWords.map((w, i) => (
+                    <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
+                      <span className="font-medium text-sm text-gray-900 w-32 shrink-0">{w.en}</span>
+                      <span className="text-sm text-gray-400 w-20 shrink-0">{w.ko}</span>
+                      <select
+                        value={w.type}
+                        onChange={e => updateAddType(i, e.target.value as Word['type'])}
+                        className="ml-auto text-xs border border-gray-200 rounded-md px-2 py-1 text-gray-600 focus:outline-none"
+                      >
+                        {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setAddWords([])} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors">
+                    다시 입력
+                  </button>
+                  <button
+                    onClick={generateAdd}
+                    disabled={addGenerating}
+                    className="flex-1 py-2 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 transition-colors"
+                  >
+                    {addGenerating ? '생성 중...' : `일러스트 생성 (${addWords.length}개)`}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">

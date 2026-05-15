@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
@@ -12,69 +12,63 @@ const TYPE_LABELS: Record<string, string> = {
   D: 'D — 자연/계절',
 }
 
-function HomeContent() {
-  const searchParams = useSearchParams()
-  const router = useRouter()
-  const [sheetUrl, setSheetUrl] = useState('')
-  const [manualText, setManualText] = useState('')
-  const [words, setWords] = useState<Word[]>([])
-  const [courseInfo, setCourseInfo] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [tab, setTab] = useState<'sheet' | 'manual'>('sheet')
-
-  useEffect(() => {
-    const sheet = searchParams.get('sheet')
-    const course = searchParams.get('course')
-    const unit = searchParams.get('unit')
-    const data = searchParams.get('data')
-
-    if (course && unit) setCourseInfo(`${course} Unit ${unit}`)
-
-    // data= param: base64 encoded JSON word list (from skill)
-    if (data) {
-      try {
-        const decoded: Word[] = JSON.parse(atob(data))
-        setWords(decoded)
-      } catch { /* ignore */ }
-      return
-    }
-
-    if (sheet) {
-      setSheetUrl(sheet)
-      fetchSheet(sheet)
-    }
-  }, [searchParams])
-
-  const fetchSheet = async (url: string) => {
-    setLoading(true)
-    setError('')
-    try {
-      const res = await fetch(`/api/fetch-sheet?url=${encodeURIComponent(url)}`)
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      setWords(data.words)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '불러오기 실패')
-      setTab('manual')
-    }
-    setLoading(false)
-  }
-
-  // Parse manual text: "영어 | 한국어" per line
-  const parseManual = () => {
-    const lines = manualText.trim().split('\n').filter(l => l.trim())
-    const parsed: Word[] = lines.map((line, i) => {
-      const parts = line.split('|').map(p => p.trim())
+function parseLines(text: string): Word[] {
+  return text.trim().split('\n')
+    .filter(l => l.trim())
+    .map((line, i) => {
+      const parts = line.split(/[|,\t]/).map(p => p.trim())
       return {
         id: `WORD${String(i + 1).padStart(3, '0')}`,
         en: parts[0] || '',
         ko: parts[1] || '',
         type: 'A' as const,
       }
-    }).filter(w => w.en && w.ko)
+    })
+    .filter(w => w.en && w.ko)
+}
+
+function HomeContent() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [manualText, setManualText] = useState('')
+  const [words, setWords] = useState<Word[]>([])
+  const [courseInfo, setCourseInfo] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const course = searchParams.get('course')
+    const unit = searchParams.get('unit')
+    const data = searchParams.get('data')
+    if (course && unit) setCourseInfo(`${course} Unit ${unit}`)
+    if (data) {
+      try {
+        const decoded: Word[] = JSON.parse(atob(data))
+        setWords(decoded)
+      } catch { /* ignore */ }
+    }
+  }, [searchParams])
+
+  const parseManual = () => {
+    const parsed = parseLines(manualText)
+    if (parsed.length === 0) { setError('단어를 입력해주세요'); return }
     setWords(parsed)
     setError('')
+  }
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const text = ev.target?.result as string
+      const parsed = parseLines(text)
+      if (parsed.length === 0) { setError('파일에서 단어를 찾을 수 없습니다'); return }
+      setWords(parsed)
+      setError('')
+    }
+    reader.readAsText(file)
+    e.target.value = ''
   }
 
   const updateType = (idx: number, type: Word['type']) => {
@@ -95,70 +89,34 @@ function HomeContent() {
           {courseInfo && <p className="mt-1 text-teal-600 font-medium">{courseInfo}</p>}
         </div>
 
-        {/* Tab selector */}
-        <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit">
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-gray-700">단어 입력</label>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1"
+            >
+              파일 업로드 (CSV / TXT)
+            </button>
+            <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleFile} />
+          </div>
+          <p className="text-xs text-gray-400 mb-3">형식: <code className="bg-gray-100 px-1 rounded">영어 | 한국어</code> 또는 <code className="bg-gray-100 px-1 rounded">영어, 한국어</code> (한 줄에 하나씩)</p>
+          <textarea
+            value={manualText}
+            onChange={e => setManualText(e.target.value)}
+            placeholder={`T-shirt | 티셔츠\ndress | 원피스\nsweater | 니트`}
+            rows={8}
+            className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
+          />
+          {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
           <button
-            onClick={() => setTab('sheet')}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${tab === 'sheet' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            onClick={parseManual}
+            disabled={!manualText.trim()}
+            className="mt-3 px-5 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            구글 시트
-          </button>
-          <button
-            onClick={() => setTab('manual')}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${tab === 'manual' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            직접 입력
+            단어 목록 확인
           </button>
         </div>
-
-        {tab === 'sheet' && (
-          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">구글 시트 URL</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={sheetUrl}
-                onChange={e => setSheetUrl(e.target.value)}
-                placeholder="https://docs.google.com/spreadsheets/d/..."
-                className="flex-1 border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-              />
-              <button
-                onClick={() => fetchSheet(sheetUrl)}
-                disabled={!sheetUrl || loading}
-                className="px-5 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? '불러오는 중...' : '불러오기'}
-              </button>
-            </div>
-            {error && (
-              <div className="mt-3 p-3 bg-orange-50 border border-orange-100 rounded-lg">
-                <p className="text-sm text-orange-600 mb-1">{error}</p>
-                <p className="text-xs text-orange-400">시트 공유 설정을 "링크가 있는 모든 사용자"로 변경하거나, <button onClick={() => setTab('manual')} className="underline font-medium">직접 입력</button> 탭을 사용하세요.</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === 'manual' && (
-          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-1">단어 직접 입력</label>
-            <p className="text-xs text-gray-400 mb-3">형식: <code className="bg-gray-100 px-1 rounded">영어 | 한국어</code> (한 줄에 하나씩)</p>
-            <textarea
-              value={manualText}
-              onChange={e => setManualText(e.target.value)}
-              placeholder={`T-shirt | 티셔츠\ndress | 원피스\nsweater | 니트`}
-              rows={8}
-              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
-            />
-            <button
-              onClick={parseManual}
-              disabled={!manualText.trim()}
-              className="mt-3 px-5 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              단어 목록 확인
-            </button>
-          </div>
-        )}
 
         {words.length > 0 && (
           <>
