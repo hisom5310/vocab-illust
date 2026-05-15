@@ -61,16 +61,18 @@ function HomeContent() {
     setLoading(false)
   }
 
-  // Parse manual text: "영어 | 한국어" or "ID | 영어 | 한국어" per line
+  // Parse manual text: "영어 | 한국어" per line
   const parseManual = () => {
     const lines = manualText.trim().split('\n').filter(l => l.trim())
     const parsed: Word[] = lines.map((line, i) => {
       const parts = line.split('|').map(p => p.trim())
-      if (parts.length >= 3) {
-        return { id: parts[0], en: parts[1], ko: parts[2], type: 'A' as const }
+      return {
+        id: `WORD${String(i + 1).padStart(3, '0')}`,
+        en: parts[0] || '',
+        ko: parts[1] || '',
+        type: 'A' as const,
       }
-      return { id: `WORD${String(i + 1).padStart(3, '0')}`, en: parts[0] || '', ko: parts[1] || '', type: 'A' as const }
-    }).filter(w => w.en)
+    }).filter(w => w.en && w.ko)
     setWords(parsed)
     setError('')
   }
@@ -140,11 +142,11 @@ function HomeContent() {
         {tab === 'manual' && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-1">단어 직접 입력</label>
-            <p className="text-xs text-gray-400 mb-3">형식: <code className="bg-gray-100 px-1 rounded">ID | 영어 | 한국어</code> (한 줄에 하나씩)</p>
+            <p className="text-xs text-gray-400 mb-3">형식: <code className="bg-gray-100 px-1 rounded">영어 | 한국어</code> (한 줄에 하나씩)</p>
             <textarea
               value={manualText}
               onChange={e => setManualText(e.target.value)}
-              placeholder={`EEV1301 | T-shirt | 티셔츠\nEEV1301 | dress | 원피스\nEEV1301 | sweater | 니트`}
+              placeholder={`T-shirt | 티셔츠\ndress | 원피스\nsweater | 니트`}
               rows={8}
               className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
             />
@@ -168,7 +170,6 @@ function HomeContent() {
               <div className="space-y-1">
                 {words.map((word, idx) => (
                   <div key={`${word.id}-${idx}`} className="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
-                    <span className="text-xs text-gray-400 w-24 shrink-0">{word.id}</span>
                     <span className="font-medium text-gray-900 w-36 shrink-0">{word.en}</span>
                     <span className="text-gray-500 text-sm w-24 shrink-0">{word.ko}</span>
                     <select
