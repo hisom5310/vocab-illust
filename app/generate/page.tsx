@@ -56,6 +56,12 @@ export default function GeneratePage() {
     <main className="min-h-screen bg-gray-50">
       <div className="max-w-4xl mx-auto px-6 py-10">
         <div className="mb-8">
+          <button
+            onClick={() => router.push('/')}
+            className="mb-4 text-sm text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1"
+          >
+            ← 단어 목록으로
+          </button>
           <h1 className="text-2xl font-bold text-gray-900">일러스트 생성 중</h1>
           {!done && current >= 0 && (
             <p className="mt-1 text-gray-500 text-sm">

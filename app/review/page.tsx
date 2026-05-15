@@ -83,6 +83,12 @@ export default function ReviewPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
+            <button
+              onClick={() => router.push('/')}
+              className="mb-2 text-sm text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1"
+            >
+              ← 단어 목록으로
+            </button>
             <h1 className="text-2xl font-bold text-gray-900">일러스트 검토</h1>
             <p className="mt-1 text-sm text-gray-500">
               승인 {approvedCount} · 대기 {pendingCount} · 총 {cards.length}개
