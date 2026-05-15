@@ -106,7 +106,7 @@ function HomeContent() {
             onChange={e => setManualText(e.target.value)}
             placeholder={`T-shirt | 티셔츠\ndress | 원피스\nsweater | 니트`}
             rows={8}
-            className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
+            className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
           />
           {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
           <button
