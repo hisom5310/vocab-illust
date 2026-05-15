@@ -1,4 +1,4 @@
-import OpenAI from 'openai'
+import { GoogleGenAI } from '@google/genai'
 
 const TYPE_PROMPTS: Record<string, string> = {
   A: `Flat vector illustration for a vocabulary flashcard. Subject: "{WORD}" ({KO}).
@@ -27,7 +27,7 @@ The illustration should be instantly recognizable. Simple shapes, friendly and a
 }
 
 export async function POST(request: Request) {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
   const { word, type = 'A', feedback } = await request.json()
 
   if (!word?.en || !word?.ko) {
@@ -36,26 +36,29 @@ export async function POST(request: Request) {
 
   const basePrompt = TYPE_PROMPTS[type] || TYPE_PROMPTS.A
   let prompt = basePrompt
-    .replace('{WORD}', word.en)
+    .replace(/\{WORD\}/g, word.en)
     .replace(/\{KO\}/g, word.ko)
-    .replace('{WORD}', word.en)
 
   if (feedback) {
     prompt += `\n\nImportant corrections from previous attempt: ${feedback}`
   }
 
   try {
-    const response = await openai.images.generate({
-      model: 'gpt-image-1',
-      prompt,
-      n: 1,
-      size: '1024x1024',
-      quality: 'medium',
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-preview-image-generation',
+      contents: prompt,
+      config: {
+        responseModalities: ['IMAGE'],
+      },
     })
 
-    const b64 = response.data?.[0]?.b64_json
-    if (!b64) throw new Error('이미지 생성 실패')
-    return Response.json({ image: `data:image/png;base64,${b64}` })
+    const parts = response.candidates?.[0]?.content?.parts
+    const imagePart = parts?.find((p: { inlineData?: { mimeType?: string; data?: string } }) => p.inlineData?.mimeType?.startsWith('image/'))
+
+    if (!imagePart?.inlineData?.data) throw new Error('이미지 생성 실패')
+
+    const { mimeType, data } = imagePart.inlineData
+    return Response.json({ image: `data:${mimeType};base64,${data}` })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '이미지 생성 실패'
     return Response.json({ error: message }, { status: 500 })
