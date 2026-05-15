@@ -46,16 +46,16 @@ export async function POST(request: Request) {
 
   try {
     const response = await openai.images.generate({
-      model: 'dall-e-3',
+      model: 'gpt-image-1',
       prompt,
       n: 1,
       size: '1024x1024',
-      quality: 'standard',
+      quality: 'medium',
     })
 
-    const imageUrl = response.data?.[0]?.url
-    if (!imageUrl) throw new Error('이미지 생성 실패')
-    return Response.json({ image: imageUrl })
+    const b64 = response.data?.[0]?.b64_json
+    if (!b64) throw new Error('이미지 생성 실패')
+    return Response.json({ image: `data:image/png;base64,${b64}` })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '이미지 생성 실패'
     return Response.json({ error: message }, { status: 500 })
