@@ -27,7 +27,10 @@ The illustration should be instantly recognizable. Simple shapes, friendly and a
 }
 
 export async function POST(request: Request) {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+    httpOptions: { apiVersion: 'v1alpha' },
+  })
   const { word, type = 'A', feedback } = await request.json()
 
   if (!word?.en || !word?.ko) {
@@ -44,19 +47,22 @@ export async function POST(request: Request) {
   }
 
   try {
-    const response = await ai.models.generateImages({
-      model: 'imagen-3.0-generate-002',
-      prompt,
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-preview-image-generation',
+      contents: prompt,
       config: {
-        numberOfImages: 1,
-        outputMimeType: 'image/png',
-        aspectRatio: '1:1',
+        responseModalities: ['IMAGE'],
       },
     })
 
-    const imageBytes = response.generatedImages?.[0]?.image?.imageBytes
-    if (!imageBytes) throw new Error('이미지 생성 실패')
-    return Response.json({ image: `data:image/png;base64,${imageBytes}` })
+    const parts = response.candidates?.[0]?.content?.parts
+    const imagePart = parts?.find(
+      (p: { inlineData?: { mimeType?: string; data?: string } }) =>
+        p.inlineData?.mimeType?.startsWith('image/')
+    )
+    if (!imagePart?.inlineData?.data) throw new Error('이미지 생성 실패')
+    const { mimeType, data } = imagePart.inlineData
+    return Response.json({ image: `data:${mimeType};base64,${data}` })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '이미지 생성 실패'
     return Response.json({ error: message }, { status: 500 })
