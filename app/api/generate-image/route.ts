@@ -1,29 +1,48 @@
 import OpenAI from 'openai'
 
+const STYLE_BASE = `STRICT STYLE RULES (never break these):
+- Fill (solid color) only. Absolutely NO strokes, NO outlines, NO gradients, NO drop shadows, NO effects.
+- White background #FFFFFF only. No patterns.
+- All corners must be rounded/soft — no sharp edges.
+- Colors ONLY from this palette:
+  Red: #FCDBD9 #FFB1AD #FF817A #FC5951 #E0433A #B84640 #7A4340
+  Pink: #FCDEDE #FFBDC5 #FC9AA4 #FF7B82 #F25F67 #C95259 #874E51
+  Orange: #FFE3B4 #FDD28B #FFC76C #FFB63F #E29D2E #C38A2F #846738
+  Yellow: #FFFBC2 #FBF496 #FFE67B #FEDE55 #D9C468 #AA9E6B #78704F
+  Green: #B6FCBF #83F292 #55E068 #38C74B #2AAB3B #288B34 #265E2D
+  Mint: #B6FFF3 #86FCDF #5CF3DB #43DFC6 #3FCCB5 #33AB98 #1D7769
+  Teal: #ACFDD7 #96E5CE #6ACAC2 #4FB6AE #38AFA5 #35928B #1C6862
+  Blue: #E0E9F7 #B9D8F6 #94B6FF #7FA7FF #647FC9 #596B9D #374B82
+  Purple: #E3CDFA #CCA1F7 #B374F2 #9B55E0 #7D3CBD #663A91 #4E3566
+  Cool Pink: #FCD4F2 #FFA8E9 #FA73D8 #F24EC9 #D13BAB #A63C8B #703862
+  Gray: #EAEEF4 #D8E2F2 #B4C2D7 #95A3B9 #818C9B #6A7380 #555555
+  Skin A: #E2B6AA  Skin B: #F6D9D0
+- Use the level-300 color as main, level-500 for shadow/depth. Max 4 colors for Type A, max 5 for others.
+- Object fills the canvas 55–70%. Even white space on all sides.
+- Silhouette alone must convey the word — readable in grayscale.`
+
 const TYPE_PROMPTS: Record<string, string> = {
-  A: `Flat vector illustration for a vocabulary flashcard. Subject: "{WORD}" ({KO}).
-Style rules: flat design only, solid color fills, NO gradients, NO outlines or strokes, NO shadows, white background (#FFFFFF).
-Composition: show the place or object as a clean recognizable scene or building exterior. Center-focused, generous white space around subject.
-Colors: use a limited warm palette — peach, sage green, sky blue, warm yellow, soft orange, light grey. Max 5 colors total.
-The illustration should be instantly recognizable to a language learner. Simple shapes, friendly and approachable style.`,
+  A: `${STYLE_BASE}
 
-  B: `Flat vector illustration for a vocabulary flashcard. Subject: a "{WORD}" character ({KO}).
-Style rules: flat design only, solid color fills, NO gradients, NO outlines or strokes, NO shadows, white background (#FFFFFF).
-Composition: half-body portrait centered in frame, character facing slightly toward viewer. Include 1-2 clear profession props or uniform details.
-Colors: diverse skin tone (vary between illustrations), use a limited palette of 5-6 flat colors.
-The character should be instantly recognizable as a {WORD}. Simple shapes, friendly and approachable style.`,
+TYPE A — Simple icon illustration for vocabulary flashcard. Word: "{WORD}" ({KO}).
+Composition: One clear representative object centered. Add 2–3 small decorative elements around it at diagonal positions (not aligned to grid). Size variation: largest element 2× bigger than smallest.
+Choose the most instantly recognizable form of "{WORD}". Simplify to essential shapes only — remove all surface texture, patterns, and unnecessary details.`,
 
-  C: `Flat vector illustration for a vocabulary flashcard. Subject: the action "{WORD}" ({KO}).
-Style rules: flat design only, solid color fills, NO gradients, NO outlines or strokes, NO shadows, white background (#FFFFFF).
-Composition: a simple figure clearly performing the action. Dynamic but clean pose. Center-focused.
-Colors: use a limited warm palette. Max 5 flat colors.
-The action should be instantly recognizable. Simple shapes, friendly and approachable style.`,
+  B: `${STYLE_BASE}
 
-  D: `Flat vector illustration for a vocabulary flashcard. Subject: "{WORD}" ({KO}) — a nature or seasonal element.
-Style rules: flat design only, solid color fills, NO gradients, NO outlines or strokes, NO shadows, white background (#FFFFFF).
-Composition: clean minimal scene showcasing the natural element. Center-focused, generous white space.
-Colors: natural palette — greens, blues, warm earth tones. Max 5 flat colors.
-The illustration should be instantly recognizable. Simple shapes, friendly and approachable style.`,
+TYPE B — Character avatar for vocabulary flashcard. Word: "{WORD}" ({KO}).
+Composition: Half-body portrait, centered. Character faces slightly toward viewer.
+Character rules: rounded oval face (width:height ≈ 1:1.15), short thick neck, simple hair as flat filled shape in gray #555555. Eyes as small arcs or ovals. No finger details — hands as simple rounded rectangles. Skin tone: #E2B6AA (face, neck, hands). Outfit: simple rounded-neck top in a single palette color. Include 1–2 profession-specific props or uniform details to make the role "{WORD}" instantly recognizable.`,
+
+  C: `${STYLE_BASE}
+
+TYPE C — Action/emotion scene for vocabulary flashcard. Word: "{WORD}" ({KO}).
+Composition: 1–2 simplified human figures clearly performing the action "{WORD}". Figures placed at bottom–center; symbolic elements (speech bubbles, arrows, icons) above. Figures shown as silhouettes + pose — minimal face detail. Use symbolic props to reinforce the action concept.`,
+
+  D: `${STYLE_BASE}
+
+TYPE D — Nature/season illustration for vocabulary flashcard. Word: "{WORD}" ({KO}).
+Composition: 3–5 related nature elements freely scattered across the canvas. No grid alignment — use diagonal/triangular layout. Elements vary in size (largest 2× smallest). Some overlap for depth. Rotate some elements for variety. Choose colors that naturally represent "{WORD}" (e.g., spring→pink+green, ocean→blue+teal).`,
 }
 
 export async function POST(request: Request) {
