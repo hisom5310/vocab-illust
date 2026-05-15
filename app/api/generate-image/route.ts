@@ -44,21 +44,19 @@ export async function POST(request: Request) {
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-preview-image-generation',
-      contents: prompt,
+    const response = await ai.models.generateImages({
+      model: 'imagen-3.0-generate-002',
+      prompt,
       config: {
-        responseModalities: ['IMAGE'],
+        numberOfImages: 1,
+        outputMimeType: 'image/png',
+        aspectRatio: '1:1',
       },
     })
 
-    const parts = response.candidates?.[0]?.content?.parts
-    const imagePart = parts?.find((p: { inlineData?: { mimeType?: string; data?: string } }) => p.inlineData?.mimeType?.startsWith('image/'))
-
-    if (!imagePart?.inlineData?.data) throw new Error('이미지 생성 실패')
-
-    const { mimeType, data } = imagePart.inlineData
-    return Response.json({ image: `data:${mimeType};base64,${data}` })
+    const imageBytes = response.generatedImages?.[0]?.image?.imageBytes
+    if (!imageBytes) throw new Error('이미지 생성 실패')
+    return Response.json({ image: `data:image/png;base64,${imageBytes}` })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '이미지 생성 실패'
     return Response.json({ error: message }, { status: 500 })
