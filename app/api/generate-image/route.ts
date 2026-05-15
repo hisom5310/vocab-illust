@@ -1,7 +1,5 @@
 import OpenAI from 'openai'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
 const TYPE_PROMPTS: Record<string, string> = {
   A: `Flat vector illustration for a vocabulary flashcard. Subject: "{WORD}" ({KO}).
 Style rules: flat design only, solid color fills, NO gradients, NO outlines or strokes, NO shadows, white background (#FFFFFF).
@@ -29,6 +27,7 @@ The illustration should be instantly recognizable. Simple shapes, friendly and a
 }
 
 export async function POST(request: Request) {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   const { word, type = 'A', feedback } = await request.json()
 
   if (!word?.en || !word?.ko) {
