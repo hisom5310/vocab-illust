@@ -1,3 +1,5 @@
+import OpenAI from 'openai'
+
 const TYPE_PROMPTS: Record<string, string> = {
   A: `Flat vector illustration for a vocabulary flashcard. Subject: "{WORD}" ({KO}).
 Style rules: flat design only, solid color fills, NO gradients, NO outlines or strokes, NO shadows, white background (#FFFFFF).
@@ -24,61 +26,8 @@ Colors: natural palette — greens, blues, warm earth tones. Max 5 flat colors.
 The illustration should be instantly recognizable. Simple shapes, friendly and approachable style.`,
 }
 
-async function tryImagen(prompt: string, apiKey: string): Promise<string | null> {
-  const models = ['imagen-3.0-generate-002', 'imagen-3.0-fast-generate-001']
-  for (const model of models) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          instances: [{ prompt }],
-          parameters: { sampleCount: 1 },
-        }),
-      }
-    )
-    const data = await res.json()
-    if (!res.ok) continue
-    const b64 = data.predictions?.[0]?.bytesBase64Encoded
-    if (b64) return `data:image/png;base64,${b64}`
-  }
-  return null
-}
-
-async function tryGemini(prompt: string, apiKey: string): Promise<string | null> {
-  const models = [
-    'gemini-2.0-flash-preview-image-generation',
-    'gemini-2.0-flash-exp-image-generation',
-    'gemini-2.0-flash-exp',
-  ]
-  for (const model of models) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-        }),
-      }
-    )
-    const data = await res.json()
-    if (!res.ok) continue
-    const parts = data.candidates?.[0]?.content?.parts
-    const imagePart = parts?.find(
-      (p: { inlineData?: { mimeType?: string; data?: string } }) =>
-        p.inlineData?.mimeType?.startsWith('image/')
-    )
-    if (imagePart?.inlineData?.data) {
-      return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
-    }
-  }
-  return null
-}
-
 export async function POST(request: Request) {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   const { word, type = 'A', feedback } = await request.json()
 
   if (!word?.en || !word?.ko) {
@@ -94,12 +43,18 @@ export async function POST(request: Request) {
     prompt += `\n\nImportant corrections from previous attempt: ${feedback}`
   }
 
-  const apiKey = process.env.GEMINI_API_KEY
-
   try {
-    const image = (await tryImagen(prompt, apiKey!)) ?? (await tryGemini(prompt, apiKey!))
-    if (!image) throw new Error('이미지 생성 실패 — 사용 가능한 모델 없음')
-    return Response.json({ image })
+    const response = await openai.images.generate({
+      model: 'gpt-image-1',
+      prompt,
+      n: 1,
+      size: '1024x1024',
+      quality: 'medium',
+    })
+
+    const b64 = response.data?.[0]?.b64_json
+    if (!b64) throw new Error('이미지 생성 실패')
+    return Response.json({ image: `data:image/png;base64,${b64}` })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '이미지 생성 실패'
     return Response.json({ error: message }, { status: 500 })
