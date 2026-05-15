@@ -24,11 +24,59 @@ Colors: natural palette — greens, blues, warm earth tones. Max 5 flat colors.
 The illustration should be instantly recognizable. Simple shapes, friendly and approachable style.`,
 }
 
-const MODELS = [
-  'gemini-2.0-flash-preview-image-generation',
-  'gemini-2.0-flash-exp-image-generation',
-  'gemini-2.0-flash-exp',
-]
+async function tryImagen(prompt: string, apiKey: string): Promise<string | null> {
+  const models = ['imagen-3.0-generate-002', 'imagen-3.0-fast-generate-001']
+  for (const model of models) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instances: [{ prompt }],
+          parameters: { sampleCount: 1 },
+        }),
+      }
+    )
+    const data = await res.json()
+    if (!res.ok) continue
+    const b64 = data.predictions?.[0]?.bytesBase64Encoded
+    if (b64) return `data:image/png;base64,${b64}`
+  }
+  return null
+}
+
+async function tryGemini(prompt: string, apiKey: string): Promise<string | null> {
+  const models = [
+    'gemini-2.0-flash-preview-image-generation',
+    'gemini-2.0-flash-exp-image-generation',
+    'gemini-2.0-flash-exp',
+  ]
+  for (const model of models) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+        }),
+      }
+    )
+    const data = await res.json()
+    if (!res.ok) continue
+    const parts = data.candidates?.[0]?.content?.parts
+    const imagePart = parts?.find(
+      (p: { inlineData?: { mimeType?: string; data?: string } }) =>
+        p.inlineData?.mimeType?.startsWith('image/')
+    )
+    if (imagePart?.inlineData?.data) {
+      return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
+    }
+  }
+  return null
+}
 
 export async function POST(request: Request) {
   const { word, type = 'A', feedback } = await request.json()
@@ -47,41 +95,13 @@ export async function POST(request: Request) {
   }
 
   const apiKey = process.env.GEMINI_API_KEY
-  let lastError = ''
 
-  for (const model of MODELS) {
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { responseModalities: ['IMAGE'] },
-          }),
-        }
-      )
-      const data = await res.json()
-      if (!res.ok) {
-        lastError = `[${model}] ${data.error?.message || res.status}`
-        continue
-      }
-      const parts = data.candidates?.[0]?.content?.parts
-      const imagePart = parts?.find(
-        (p: { inlineData?: { mimeType?: string; data?: string } }) =>
-          p.inlineData?.mimeType?.startsWith('image/')
-      )
-      if (!imagePart?.inlineData?.data) {
-        lastError = `[${model}] 이미지 파트 없음`
-        continue
-      }
-      const { mimeType, data: imageData } = imagePart.inlineData
-      return Response.json({ image: `data:${mimeType};base64,${imageData}` })
-    } catch (err) {
-      lastError = `[${model}] ${err instanceof Error ? err.message : '요청 실패'}`
-    }
+  try {
+    const image = (await tryImagen(prompt, apiKey!)) ?? (await tryGemini(prompt, apiKey!))
+    if (!image) throw new Error('이미지 생성 실패 — 사용 가능한 모델 없음')
+    return Response.json({ image })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : '이미지 생성 실패'
+    return Response.json({ error: message }, { status: 500 })
   }
-
-  return Response.json({ error: lastError || '이미지 생성 실패' }, { status: 500 })
 }
