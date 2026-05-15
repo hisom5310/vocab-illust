@@ -69,6 +69,7 @@ export async function POST(request: Request) {
       n: 1,
       size: '1024x1024',
       quality: 'medium',
+      background: 'transparent',
     })
 
     const b64 = response.data?.[0]?.b64_json
