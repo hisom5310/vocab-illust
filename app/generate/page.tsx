@@ -48,9 +48,8 @@ export default function GeneratePage() {
     setCurrent(-1)
     setDone(true)
     localStorage.setItem('vocab-results', JSON.stringify(res))
+    router.push('/review')
   }
-
-  const goToReview = () => router.push('/review')
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -117,14 +116,6 @@ export default function GeneratePage() {
           ))}
         </div>
 
-        {done && (
-          <button
-            onClick={goToReview}
-            className="w-full py-3.5 bg-teal-500 text-white rounded-xl font-semibold hover:bg-teal-600 transition-colors"
-          >
-            검토 페이지로 →
-          </button>
-        )}
       </div>
     </main>
   )
