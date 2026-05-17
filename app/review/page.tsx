@@ -236,7 +236,7 @@ export default function ReviewPage() {
               onChange={e => setAddText(e.target.value)}
               placeholder={`jacket | 재킷\nhat | 모자`}
               rows={4}
-              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none mb-3"
+              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none mb-3"
             />
             {addWords.length === 0 ? (
               <button
@@ -353,7 +353,7 @@ export default function ReviewPage() {
                         onChange={e => setComment(idx, e.target.value)}
                         placeholder="수정 요청 사항 (선택)&#10;예: 배경 색상 변경, 크기 조정"
                         rows={2}
-                        className="w-full text-xs border border-gray-200 rounded-md px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-orange-300 mb-1.5"
+                        className="w-full text-xs text-gray-900 border border-gray-200 rounded-md px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-orange-300 mb-1.5"
                       />
                       <button
                         onClick={() => { regenerate(idx); setExpandedComment(null) }}
@@ -466,7 +466,7 @@ export default function ReviewPage() {
                     onChange={e => setComment(lightbox, e.target.value)}
                     placeholder="수정 요청 사항 (선택)"
                     rows={2}
-                    className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-orange-300 mb-2"
+                    className="w-full text-sm text-gray-900 border border-gray-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-orange-300 mb-2"
                   />
                   <button
                     onClick={() => regenerate(lightbox)}
