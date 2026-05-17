@@ -47,7 +47,7 @@ Composition: 3–5 related nature elements freely scattered across the canvas. N
 
 export async function POST(request: Request) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  const { word, type = 'A', feedback } = await request.json()
+  const { word, type = 'A', feedback, referenceImage } = await request.json()
 
   if (!word?.en || !word?.ko) {
     return Response.json({ error: '단어 정보가 없습니다' }, { status: 400 })
@@ -63,16 +63,33 @@ export async function POST(request: Request) {
   }
 
   try {
-    const response = await openai.images.generate({
-      model: 'gpt-image-1',
-      prompt,
-      n: 1,
-      size: '1024x1024',
-      quality: 'medium',
-      background: 'transparent',
-    })
+    let b64: string | null | undefined
 
-    const b64 = response.data?.[0]?.b64_json
+    if (referenceImage) {
+      const b64data = (referenceImage as string).replace(/^data:image\/\w+;base64,/, '')
+      const buffer = Buffer.from(b64data, 'base64')
+      const file = new File([buffer], 'reference.png', { type: 'image/png' })
+      const response = await openai.images.edit({
+        model: 'gpt-image-1',
+        image: file,
+        prompt,
+        n: 1,
+        size: '1024x1024',
+        quality: 'medium',
+      })
+      b64 = response.data?.[0]?.b64_json
+    } else {
+      const response = await openai.images.generate({
+        model: 'gpt-image-1',
+        prompt,
+        n: 1,
+        size: '1024x1024',
+        quality: 'medium',
+        background: 'transparent',
+      })
+      b64 = response.data?.[0]?.b64_json
+    }
+
     if (!b64) throw new Error('이미지 생성 실패')
     return Response.json({ image: `data:image/png;base64,${b64}` })
   } catch (err: unknown) {

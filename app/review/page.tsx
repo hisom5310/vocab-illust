@@ -33,6 +33,8 @@ export default function ReviewPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [cards, setCards] = useState<CardState[]>([])
   const [expandedComment, setExpandedComment] = useState<number | null>(null)
+  const [refImages, setRefImages] = useState<Record<number, string>>({})
+  const [lbRefImage, setLbRefImage] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<number | null>(null)
   const [lightboxComment, setLightboxComment] = useState(false)
   const [addPanel, setAddPanel] = useState(false)
@@ -75,10 +77,20 @@ export default function ReviewPage() {
     setCards(prev => prev.map((c, i) => i === idx ? { ...c, comment } : c))
   }
 
-  const regenerate = async (idx: number) => {
+  const readFileAsBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = e => resolve(e.target?.result as string)
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+
+  const regenerate = async (idx: number, referenceImage?: string) => {
     const card = cards[idx]
     setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: true } : c))
     setLightboxComment(false)
+    setRefImages(prev => { const n = { ...prev }; delete n[idx]; return n })
+    setLbRefImage(null)
     try {
       const r = await fetch('/api/generate-image', {
         method: 'POST',
@@ -87,6 +99,7 @@ export default function ReviewPage() {
           word: card.result.word,
           type: card.result.word.type,
           feedback: card.comment || undefined,
+          referenceImage: referenceImage || undefined,
         }),
       })
       const data = await r.json()
@@ -369,8 +382,28 @@ export default function ReviewPage() {
                         rows={2}
                         className="w-full text-xs text-gray-900 border border-gray-200 rounded-md px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-orange-300 mb-1.5"
                       />
+                      <label className="flex items-center gap-1.5 cursor-pointer mb-1.5">
+                        <input
+                          type="file" accept="image/*" className="hidden"
+                          onChange={async e => {
+                            const file = e.target.files?.[0]
+                            if (file) {
+                              const b64 = await readFileAsBase64(file)
+                              setRefImages(prev => ({ ...prev, [idx]: b64 }))
+                            }
+                            e.target.value = ''
+                          }}
+                        />
+                        <span className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+                          {refImages[idx] ? '✓ 레퍼런스 첨부됨' : '+ 레퍼런스 이미지'}
+                        </span>
+                        {refImages[idx] && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={refImages[idx]} alt="" className="w-8 h-8 rounded object-cover" />
+                        )}
+                      </label>
                       <button
-                        onClick={() => { regenerate(idx); setExpandedComment(null) }}
+                        onClick={() => { regenerate(idx, refImages[idx]); setExpandedComment(null) }}
                         className="w-full py-1.5 bg-orange-400 text-white rounded-md text-xs font-medium hover:bg-orange-500 transition-colors"
                       >
                         다시 생성
@@ -482,8 +515,25 @@ export default function ReviewPage() {
                     rows={2}
                     className="w-full text-sm text-gray-900 border border-gray-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-orange-300 mb-2"
                   />
+                  <label className="flex items-center gap-2 cursor-pointer mb-2">
+                    <input
+                      type="file" accept="image/*" className="hidden"
+                      onChange={async e => {
+                        const file = e.target.files?.[0]
+                        if (file) readFileAsBase64(file).then(setLbRefImage)
+                        e.target.value = ''
+                      }}
+                    />
+                    <span className="text-sm text-teal-600 hover:text-teal-700 font-medium">
+                      {lbRefImage ? '✓ 레퍼런스 첨부됨' : '+ 레퍼런스 이미지'}
+                    </span>
+                    {lbRefImage && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={lbRefImage} alt="" className="w-10 h-10 rounded object-cover" />
+                    )}
+                  </label>
                   <button
-                    onClick={() => regenerate(lightbox)}
+                    onClick={() => regenerate(lightbox, lbRefImage ?? undefined)}
                     className="w-full py-2.5 bg-orange-400 text-white rounded-xl text-sm font-medium hover:bg-orange-500 transition-colors"
                   >
                     다시 생성
