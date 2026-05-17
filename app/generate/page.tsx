@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { idbSet, idbGet } from '../lib/storage'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
 type Result = { word: Word; image: string | null; error: string | null }
@@ -15,11 +16,11 @@ export default function GeneratePage() {
   const started = useRef(false)
 
   useEffect(() => {
-    const stored = localStorage.getItem('vocab-words')
-    if (!stored) { router.push('/'); return }
-    const w: Word[] = JSON.parse(stored)
-    setWords(w)
-    setResults(w.map(word => ({ word, image: null, error: null })))
+    idbGet<Word[]>('vocab-words').then(w => {
+      if (!w) { router.push('/'); return }
+      setWords(w)
+      setResults(w.map(word => ({ word, image: null, error: null })))
+    })
   }, [router])
 
   useEffect(() => {
@@ -47,7 +48,7 @@ export default function GeneratePage() {
     }
     setCurrent(-1)
     setDone(true)
-    localStorage.setItem('vocab-results', JSON.stringify(res))
+    await idbSet('vocab-results', res)
     router.push('/review')
   }
 

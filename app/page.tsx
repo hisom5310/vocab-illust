@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { idbSet } from './lib/storage'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
 
@@ -75,9 +76,9 @@ function HomeContent() {
     setWords(prev => prev.map((w, i) => i === idx ? { ...w, type } : w))
   }
 
-  const startGeneration = () => {
-    localStorage.setItem('vocab-words', JSON.stringify(words))
-    localStorage.setItem('vocab-course', courseInfo)
+  const startGeneration = async () => {
+    await idbSet('vocab-words', words)
+    await idbSet('vocab-course', courseInfo)
     router.push('/generate')
   }
 
