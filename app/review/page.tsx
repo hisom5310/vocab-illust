@@ -44,14 +44,28 @@ export default function ReviewPage() {
     const stored = localStorage.getItem('vocab-results')
     if (!stored) { router.push('/'); return }
     const results: Result[] = JSON.parse(stored)
+    const statusStored = localStorage.getItem('vocab-card-statuses')
+    const statusMap: Record<string, { status: Status; comment: string }> =
+      statusStored ? Object.fromEntries(
+        (JSON.parse(statusStored) as { id: string; status: Status; comment: string }[])
+          .map(s => [s.id, s])
+      ) : {}
     setCards(results.map(r => ({
       result: r,
-      status: 'pending',
-      comment: '',
+      status: statusMap[r.word.id]?.status ?? 'pending',
+      comment: statusMap[r.word.id]?.comment ?? '',
       regenerating: false,
       newImage: null,
     })))
   }, [router])
+
+  useEffect(() => {
+    if (cards.length === 0) return
+    const results = cards.map(c => ({ ...c.result, image: c.newImage ?? c.result.image }))
+    localStorage.setItem('vocab-results', JSON.stringify(results))
+    const statuses = cards.map(c => ({ id: c.result.word.id, status: c.status, comment: c.comment }))
+    localStorage.setItem('vocab-card-statuses', JSON.stringify(statuses))
+  }, [cards])
 
   const setStatus = (idx: number, status: Status) => {
     setCards(prev => prev.map((c, i) => i === idx ? { ...c, status } : c))
