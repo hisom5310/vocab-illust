@@ -25,14 +25,18 @@ const TYPE_PROMPTS: Record<string, string> = {
   A: `${STYLE_BASE}
 
 TYPE A — Simple icon illustration for vocabulary flashcard. Word: "{WORD}" ({KO}).
-Composition: One clear representative object centered. Add 2–3 small decorative elements around it at diagonal positions (not aligned to grid). Size variation: largest element 2× bigger than smallest.
+Composition: One clear representative object centered, filling 55–70% of canvas.
+Decorative elements rule — judge by word type:
+  • Add 2–3 small semantic elements ONLY if they reinforce the word's identity. Place at diagonal positions, not grid-aligned. Examples: party→confetti+stars, music→notes, fire→sparks, rain→droplets, love→hearts.
+  • OMIT all decorative elements if the object is self-explanatory on its own. Examples: clothing (T-shirt, dress, pants), food items, furniture, tools, color swatches — the silhouette alone is enough.
 Choose the most instantly recognizable form of "{WORD}". Simplify to essential shapes only — remove all surface texture, patterns, and unnecessary details.`,
 
   B: `${STYLE_BASE}
 
 TYPE B — Character avatar for vocabulary flashcard. Word: "{WORD}" ({KO}).
 Composition: Half-body portrait, centered. Character faces slightly toward viewer.
-Character rules: rounded oval face (width:height ≈ 1:1.15), short thick neck, simple hair as flat filled shape in gray #555555. Eyes as small arcs or ovals. No finger details — hands as simple rounded rectangles. Skin tone: #E2B6AA (face, neck, hands). Outfit: simple rounded-neck top in a single palette color. Include 1–2 profession-specific props or uniform details to make the role "{WORD}" instantly recognizable.`,
+Character rules: rounded oval face (width:height ≈ 1:1.15), short thick neck, simple hair as flat filled shape in gray #555555. Eyes as small arcs or ovals. No finger details — hands as simple rounded rectangles. Skin tone: #E2B6AA (face, neck, hands). Outfit: simple rounded-neck top in a single palette color matching the profession's identity.
+Props rule: Include 1–2 profession-specific props or symbols that instantly identify "{WORD}" — these are required, not optional. Place props in hands or near the character (e.g., doctor→stethoscope, chef→toque+ladle, teacher→pointer+book, police→badge, firefighter→helmet). Do NOT add generic sparkles or unrelated decorations.`,
 
   C: `${STYLE_BASE}
 
