@@ -111,15 +111,19 @@ export default function ReviewPage() {
     }
   }
 
+  const downloadSingle = (card: CardState) => {
+    const img = card.newImage || card.result.image
+    if (!img) return
+    const a = document.createElement('a')
+    a.href = img
+    a.download = `${card.result.word.id}_${card.result.word.en.replace(/\s+/g, '_')}.png`
+    a.click()
+  }
+
   const downloadApproved = () => {
     cards.forEach(card => {
       if (card.status !== 'approved') return
-      const img = card.newImage || card.result.image
-      if (!img) return
-      const a = document.createElement('a')
-      a.href = img
-      a.download = `${card.result.word.id}_${card.result.word.en.replace(/\s+/g, '_')}.png`
-      a.click()
+      downloadSingle(card)
     })
   }
 
@@ -371,6 +375,14 @@ export default function ReviewPage() {
                     >
                       재생성
                     </button>
+                    <button
+                      onClick={() => downloadSingle(card)}
+                      disabled={!(card.newImage || card.result.image)}
+                      title="이미지 저장"
+                      className="w-7 py-1.5 bg-gray-100 text-gray-500 rounded-md text-xs font-medium hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+                    >
+                      ↓
+                    </button>
                   </div>
 
                   {expandedComment === idx && (
@@ -503,6 +515,14 @@ export default function ReviewPage() {
                   className="flex-1 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-sm font-medium hover:bg-orange-50 hover:text-orange-500 transition-colors"
                 >
                   재생성
+                </button>
+                <button
+                  onClick={() => downloadSingle(lbCard)}
+                  disabled={!(lbCard.newImage || lbCard.result.image)}
+                  title="이미지 저장"
+                  className="px-4 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-200 disabled:opacity-30 transition-colors"
+                >
+                  ↓ 저장
                 </button>
               </div>
 
