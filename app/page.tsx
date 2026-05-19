@@ -35,13 +35,18 @@ function HomeContent() {
   const [manualText, setManualText] = useState('')
   const [words, setWords] = useState<Word[]>([])
   const [courseInfo, setCourseInfo] = useState('')
+  const [lang, setLang] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
     const course = searchParams.get('course')
     const unit = searchParams.get('unit')
     const data = searchParams.get('data')
-    if (course && unit) setCourseInfo(`${course} Unit ${unit}`)
+    if (course && unit) {
+      const info = `${course} Unit ${unit}`
+      setCourseInfo(info)
+      setLang(course)
+    }
     if (data) {
       try {
         const decoded: Word[] = JSON.parse(atob(data))
@@ -79,6 +84,7 @@ function HomeContent() {
   const startGeneration = async () => {
     await idbSet('vocab-words', words)
     await idbSet('vocab-course', courseInfo)
+    await idbSet('vocab-lang', lang.trim().toUpperCase())
     router.push('/generate')
   }
 
@@ -91,6 +97,19 @@ function HomeContent() {
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          {/* Lang tag */}
+          <div className="flex items-center gap-3 mb-5 pb-5 border-b border-gray-100">
+            <label className="text-sm font-medium text-gray-700 shrink-0">언어 태그</label>
+            <input
+              value={lang}
+              onChange={e => setLang(e.target.value.toUpperCase())}
+              placeholder="ESEN, JPEN, KR..."
+              maxLength={10}
+              className="w-32 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            />
+            <span className="text-xs text-gray-400">언어별로 일러스트를 분류합니다</span>
+          </div>
+
           <div className="flex items-center justify-between mb-1">
             <label className="block text-sm font-medium text-gray-700">단어 입력</label>
             <button
@@ -149,7 +168,7 @@ function HomeContent() {
               onClick={startGeneration}
               className="w-full py-3.5 bg-teal-500 text-white rounded-xl font-semibold hover:bg-teal-600 transition-colors text-base"
             >
-              일러스트 생성 시작 ({words.length}개) →
+              {lang ? `[${lang}] ` : ''}일러스트 생성 시작 ({words.length}개) →
             </button>
           </>
         )}

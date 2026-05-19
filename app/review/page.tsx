@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { idbGet, idbSet } from '../lib/storage'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
-type Result = { word: Word; image: string | null; error: string | null }
+type Result = { word: Word; image: string | null; error: string | null; lang?: string }
 type Status = 'pending' | 'approved' | 'rejected'
 type CardState = {
   result: Result
@@ -14,6 +14,7 @@ type CardState = {
   regenerating: boolean
   newImage: string | null
   isNew: boolean
+  langs: string[]
 }
 
 type FilterType = 'all' | 'approved' | 'pending' | 'regenerated'
@@ -36,6 +37,7 @@ export default function ReviewPage() {
   const router = useRouter()
   const fileRef = useRef<HTMLInputElement>(null)
   const [cards, setCards] = useState<CardState[]>([])
+  const [selectedLang, setSelectedLang] = useState<string>('all')
   const [filter, setFilter] = useState<FilterType>('all')
   const [expandedComment, setExpandedComment] = useState<number | null>(null)
   const [refImages, setRefImages] = useState<Record<number, string>>({})
@@ -44,16 +46,17 @@ export default function ReviewPage() {
   const [lightboxComment, setLightboxComment] = useState(false)
   const [addPanel, setAddPanel] = useState(false)
   const [addText, setAddText] = useState('')
+  const [addLang, setAddLang] = useState('')
   const [addWords, setAddWords] = useState<Word[]>([])
   const [addGenerating, setAddGenerating] = useState(false)
 
   useEffect(() => {
     Promise.all([
       idbGet<Result[]>('vocab-results'),
-      idbGet<{ id: string; status: Status; comment: string; isNew?: boolean }[]>('vocab-card-statuses'),
+      idbGet<{ id: string; status: Status; comment: string; isNew?: boolean; langs?: string[] }[]>('vocab-card-statuses'),
     ]).then(([results, statuses]) => {
       if (!results) { router.push('/'); return }
-      const statusMap: Record<string, { status: Status; comment: string; isNew?: boolean }> =
+      const statusMap: Record<string, { status: Status; comment: string; isNew?: boolean; langs?: string[] }> =
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => ({
         result: r,
@@ -62,6 +65,7 @@ export default function ReviewPage() {
         regenerating: false,
         newImage: null,
         isNew: statusMap[r.word.id]?.isNew ?? false,
+        langs: statusMap[r.word.id]?.langs ?? (r.lang ? [r.lang] : []),
       })))
     })
   }, [router])
@@ -70,7 +74,13 @@ export default function ReviewPage() {
     if (cards.length === 0) return
     const results = cards.map(c => ({ ...c.result, image: c.newImage ?? c.result.image }))
     idbSet('vocab-results', results)
-    const statuses = cards.map(c => ({ id: c.result.word.id, status: c.status, comment: c.comment, isNew: c.isNew }))
+    const statuses = cards.map(c => ({
+      id: c.result.word.id,
+      status: c.status,
+      comment: c.comment,
+      isNew: c.isNew,
+      langs: c.langs,
+    }))
     idbSet('vocab-card-statuses', statuses)
   }, [cards])
 
@@ -135,13 +145,6 @@ export default function ReviewPage() {
     a.click()
   }
 
-  const downloadApproved = () => {
-    cards.forEach(card => {
-      if (card.status !== 'approved') return
-      downloadSingle(card)
-    })
-  }
-
   const openLightbox = (idx: number) => {
     setLightbox(idx)
     setLightboxComment(false)
@@ -198,18 +201,53 @@ export default function ReviewPage() {
   const generateAdd = async () => {
     if (addWords.length === 0) return
     setAddGenerating(true)
-    const newCards: CardState[] = addWords.map(w => ({
-      result: { word: w, image: null, error: null },
-      status: 'pending', comment: '', regenerating: true, newImage: null, isNew: false,
-    }))
-    setCards(prev => [...prev, ...newCards])
+
+    const currentCards = cards
+    const lang = addLang.trim().toUpperCase()
+
+    // Split into duplicates (already exist) vs new words
+    const duplicateIndices: number[] = []
+    const newWords: Word[] = []
+    for (const word of addWords) {
+      const existingIdx = currentCards.findIndex(
+        c => c.result.word.en.toLowerCase() === word.en.toLowerCase()
+      )
+      if (existingIdx !== -1) {
+        duplicateIndices.push(existingIdx)
+      } else {
+        newWords.push(word)
+      }
+    }
+
+    // Merge lang into existing duplicate cards
+    if (lang && duplicateIndices.length > 0) {
+      setCards(prev => prev.map((c, i) => {
+        if (duplicateIndices.includes(i) && !c.langs.includes(lang)) {
+          return { ...c, langs: [...c.langs, lang] }
+        }
+        return c
+      }))
+    }
+
     setAddPanel(false)
     setAddText('')
     setAddWords([])
 
-    const startIdx = cards.length
-    for (let i = 0; i < addWords.length; i++) {
-      const word = addWords[i]
+    if (newWords.length === 0) {
+      setAddGenerating(false)
+      return
+    }
+
+    const startIdx = currentCards.length
+    const newCards: CardState[] = newWords.map(w => ({
+      result: { word: w, image: null, error: null },
+      status: 'pending', comment: '', regenerating: true, newImage: null, isNew: false,
+      langs: lang ? [lang] : [],
+    }))
+    setCards(prev => [...prev, ...newCards])
+
+    for (let i = 0; i < newWords.length; i++) {
+      const word = newWords[i]
       try {
         const r = await fetch('/api/generate-image', {
           method: 'POST',
@@ -231,15 +269,41 @@ export default function ReviewPage() {
     setAddGenerating(false)
   }
 
-  const approvedCount = cards.filter(c => c.status === 'approved').length
-  const pendingCount = cards.filter(c => c.status === 'pending').length
-  const regeneratedCount = cards.filter(c => c.isNew).length
-  const filteredCards: { card: CardState; idx: number }[] =
-    filter === 'all' ? cards.map((card, idx) => ({ card, idx })) :
-    filter === 'approved' ? cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.status === 'approved') :
-    filter === 'pending' ? cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.status !== 'approved') :
-    cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.isNew)
+  // Unique language tags across all cards
+  const allLangs = [...new Set(cards.flatMap(c => c.langs).filter(Boolean))].sort()
+
+  // Language-level filter
+  const langFilteredCards: { card: CardState; idx: number }[] =
+    selectedLang === 'all'
+      ? cards.map((card, idx) => ({ card, idx }))
+      : cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.langs.includes(selectedLang))
+
+  // Status-level filter (within language filter)
+  const filteredCards =
+    filter === 'all' ? langFilteredCards :
+    filter === 'approved' ? langFilteredCards.filter(({ card }) => card.status === 'approved') :
+    filter === 'pending' ? langFilteredCards.filter(({ card }) => card.status !== 'approved') :
+    langFilteredCards.filter(({ card }) => card.isNew)
+
+  const approvedCount = langFilteredCards.filter(({ card }) => card.status === 'approved').length
+  const pendingCount = langFilteredCards.filter(({ card }) => card.status === 'pending').length
+  const regeneratedCount = langFilteredCards.filter(({ card }) => card.isNew).length
+
+  const downloadApproved = () => {
+    langFilteredCards
+      .filter(({ card }) => card.status === 'approved')
+      .forEach(({ card }) => downloadSingle(card))
+  }
+
   const lbCard = lightbox !== null ? cards[lightbox] : null
+
+  // Duplicate preview for add panel
+  const addWordDups = addWords.filter(w =>
+    cards.some(c => c.result.word.en.toLowerCase() === w.en.toLowerCase())
+  )
+  const addWordNew = addWords.filter(w =>
+    !cards.some(c => c.result.word.en.toLowerCase() === w.en.toLowerCase())
+  )
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -249,12 +313,18 @@ export default function ReviewPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">생성한 일러스트</h1>
             <p className="mt-1 text-sm text-gray-500">
-              승인 {approvedCount} · 대기 {pendingCount} · 총 {cards.length}개
+              승인 {approvedCount} · 대기 {pendingCount} · 총 {langFilteredCards.length}개
+              {selectedLang !== 'all' && (
+                <span className="ml-2 px-1.5 py-0.5 bg-teal-50 text-teal-600 text-xs rounded font-medium">{selectedLang}</span>
+              )}
             </p>
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => setAddPanel(v => !v)}
+              onClick={() => {
+                setAddPanel(v => !v)
+                if (!addPanel && selectedLang !== 'all') setAddLang(selectedLang)
+              }}
               className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
             >
               + 단어 추가 생성
@@ -272,6 +342,21 @@ export default function ReviewPage() {
         {/* Add panel */}
         {addPanel && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+            {/* Lang input */}
+            <div className="flex items-center gap-3 mb-4 pb-4 border-b border-gray-100">
+              <label className="text-xs font-medium text-gray-600 shrink-0">언어 태그</label>
+              <input
+                value={addLang}
+                onChange={e => setAddLang(e.target.value.toUpperCase())}
+                placeholder="ESEN, JPEN..."
+                maxLength={10}
+                className="w-28 border border-gray-200 rounded-md px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-teal-400"
+              />
+              {addLang && (
+                <span className="text-xs text-gray-400">이미 있는 단어는 이 태그만 추가됩니다</span>
+              )}
+            </div>
+
             <div className="flex items-center justify-between mb-1">
               <h3 className="font-semibold text-gray-900 text-sm">단어 추가 생성</h3>
               <button
@@ -301,20 +386,35 @@ export default function ReviewPage() {
             ) : (
               <>
                 <div className="space-y-1 mb-3">
-                  {addWords.map((w, i) => (
-                    <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
-                      <span className="font-medium text-sm text-gray-900 w-32 shrink-0">{w.en}</span>
-                      <span className="text-sm text-gray-400 w-20 shrink-0">{w.ko}</span>
-                      <select
-                        value={w.type}
-                        onChange={e => updateAddType(i, e.target.value as Word['type'])}
-                        className="ml-auto text-xs border border-gray-200 rounded-md px-2 py-1 text-gray-600 focus:outline-none"
-                      >
-                        {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                      </select>
-                    </div>
-                  ))}
+                  {addWords.map((w, i) => {
+                    const isDup = cards.some(c => c.result.word.en.toLowerCase() === w.en.toLowerCase())
+                    return (
+                      <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
+                        <span className="font-medium text-sm text-gray-900 w-32 shrink-0">{w.en}</span>
+                        <span className="text-sm text-gray-400 w-20 shrink-0">{w.ko}</span>
+                        {isDup ? (
+                          <span className="ml-auto text-xs px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full border border-amber-200">
+                            태그 추가
+                          </span>
+                        ) : (
+                          <select
+                            value={w.type}
+                            onChange={e => updateAddType(i, e.target.value as Word['type'])}
+                            className="ml-auto text-xs border border-gray-200 rounded-md px-2 py-1 text-gray-600 focus:outline-none"
+                          >
+                            {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                          </select>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
+                {addWordDups.length > 0 && (
+                  <p className="text-xs text-amber-600 mb-2">
+                    {addWordDups.length}개는 이미 존재 — 언어 태그만 추가됩니다.
+                    {addWordNew.length > 0 && ` ${addWordNew.length}개 신규 생성.`}
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <button onClick={() => setAddWords([])} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors">
                     다시 입력
@@ -324,7 +424,11 @@ export default function ReviewPage() {
                     disabled={addGenerating}
                     className="flex-1 py-2 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 transition-colors"
                   >
-                    {addGenerating ? '생성 중...' : `일러스트 생성 (${addWords.length}개)`}
+                    {addGenerating ? '생성 중...' : (
+                      addWordNew.length > 0
+                        ? `일러스트 생성 (${addWordNew.length}개)${addWordDups.length > 0 ? ` + 태그 추가 (${addWordDups.length}개)` : ''}`
+                        : `태그 추가 (${addWordDups.length}개)`
+                    )}
                   </button>
                 </div>
               </>
@@ -332,12 +436,41 @@ export default function ReviewPage() {
           </div>
         )}
 
-        {/* Filter tabs */}
+        {/* Language tabs — shown only when multiple langs exist */}
+        {allLangs.length > 0 && (
+          <div className="flex gap-2 mb-4 flex-wrap">
+            <button
+              onClick={() => setSelectedLang('all')}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                selectedLang === 'all'
+                  ? 'bg-teal-500 text-white shadow-sm'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:border-teal-300 hover:text-teal-600'
+              }`}
+            >
+              All <span className="ml-1 opacity-70 text-xs tabular-nums">{cards.length}</span>
+            </button>
+            {allLangs.map(lang => (
+              <button
+                key={lang}
+                onClick={() => setSelectedLang(lang)}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  selectedLang === lang
+                    ? 'bg-teal-500 text-white shadow-sm'
+                    : 'bg-white border border-gray-200 text-gray-600 hover:border-teal-300 hover:text-teal-600'
+                }`}
+              >
+                {lang} <span className="ml-1 opacity-70 text-xs tabular-nums">{cards.filter(c => c.langs.includes(lang)).length}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Status filter tabs */}
         <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-xl w-fit">
           {([
-            ['all', '전체', cards.length],
+            ['all', '전체', langFilteredCards.length],
             ['approved', '승인됨', approvedCount],
-            ['pending', '승인전', cards.filter(c => c.status !== 'approved').length],
+            ['pending', '승인전', langFilteredCards.filter(({ card }) => card.status !== 'approved').length],
             ['regenerated', '재생성', regeneratedCount],
           ] as [FilterType, string, number][]).map(([key, label, count]) => (
             <button
@@ -351,9 +484,7 @@ export default function ReviewPage() {
             >
               {label}
               {count > 0 && (
-                <span className={`ml-1.5 text-xs tabular-nums ${filter === key ? 'text-gray-400' : 'text-gray-400'}`}>
-                  {count}
-                </span>
+                <span className="ml-1.5 text-xs tabular-nums text-gray-400">{count}</span>
               )}
             </button>
           ))}
@@ -372,7 +503,7 @@ export default function ReviewPage() {
                   'border-gray-200'
                 }`}
               >
-                {/* Image — click to open lightbox */}
+                {/* Image */}
                 <div
                   className="aspect-square bg-gray-50 relative cursor-pointer group"
                   onClick={() => img && openLightbox(idx)}
@@ -395,15 +526,20 @@ export default function ReviewPage() {
                     </div>
                   )}
 
-                  {/* Status / NEW badges */}
+                  {/* Badges */}
                   {card.status === 'approved' && (
-                    <div className="absolute top-2 right-2 bg-teal-500 text-white text-xs px-2 py-0.5 rounded-full">
-                      승인
-                    </div>
+                    <div className="absolute top-2 right-2 bg-teal-500 text-white text-xs px-2 py-0.5 rounded-full">승인</div>
                   )}
                   {card.isNew && !card.regenerating && (
-                    <div className="absolute top-2 left-2 bg-orange-400 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
-                      NEW
+                    <div className="absolute top-2 left-2 bg-orange-400 text-white text-xs px-2 py-0.5 rounded-full font-semibold">NEW</div>
+                  )}
+
+                  {/* Lang chips */}
+                  {card.langs.length > 0 && (
+                    <div className="absolute bottom-2 left-2 flex gap-1 flex-wrap">
+                      {card.langs.map(l => (
+                        <span key={l} className="text-xs px-1.5 py-0.5 bg-black/30 text-white rounded backdrop-blur-sm">{l}</span>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -521,36 +657,30 @@ export default function ReviewPage() {
 
               {/* Nav arrows */}
               {lightbox > 0 && (
-                <button
-                  onClick={prevImage}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-700 text-lg transition-colors"
-                >
-                  ‹
-                </button>
+                <button onClick={prevImage} className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-700 text-lg transition-colors">‹</button>
               )}
               {lightbox < cards.length - 1 && (
-                <button
-                  onClick={nextImage}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-700 text-lg transition-colors"
-                >
-                  ›
-                </button>
+                <button onClick={nextImage} className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-700 text-lg transition-colors">›</button>
               )}
 
               {/* Close */}
-              <button
-                onClick={closeLightbox}
-                className="absolute top-3 right-3 w-8 h-8 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-500 text-sm transition-colors"
-              >
-                ✕
-              </button>
+              <button onClick={closeLightbox} className="absolute top-3 right-3 w-8 h-8 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-500 text-sm transition-colors">✕</button>
 
-              {/* Status / NEW badges */}
+              {/* Badges */}
               {lbCard.status === 'approved' && (
                 <div className="absolute top-3 left-3 bg-teal-500 text-white text-xs px-2.5 py-1 rounded-full">승인</div>
               )}
               {lbCard.isNew && !lbCard.regenerating && (
                 <div className="absolute top-3 left-3 bg-orange-400 text-white text-xs px-2.5 py-1 rounded-full font-semibold">NEW</div>
+              )}
+
+              {/* Lang chips */}
+              {lbCard.langs.length > 0 && (
+                <div className="absolute bottom-3 left-3 flex gap-1.5 flex-wrap">
+                  {lbCard.langs.map(l => (
+                    <span key={l} className="text-xs px-2 py-0.5 bg-black/30 text-white rounded-full backdrop-blur-sm font-medium">{l}</span>
+                  ))}
+                </div>
               )}
             </div>
 

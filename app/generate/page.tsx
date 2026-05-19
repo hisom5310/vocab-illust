@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { idbSet, idbGet } from '../lib/storage'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
-type Result = { word: Word; image: string | null; error: string | null }
+type Result = { word: Word; image: string | null; error: string | null; lang?: string }
 
 export default function GeneratePage() {
   const router = useRouter()
@@ -16,21 +16,23 @@ export default function GeneratePage() {
   const started = useRef(false)
 
   useEffect(() => {
-    idbGet<Word[]>('vocab-words').then(w => {
+    Promise.all([
+      idbGet<Word[]>('vocab-words'),
+      idbGet<string>('vocab-lang'),
+    ]).then(([w, l]) => {
       if (!w) { router.push('/'); return }
+      const lang = l || ''
       setWords(w)
-      setResults(w.map(word => ({ word, image: null, error: null })))
+      setResults(w.map(word => ({ word, image: null, error: null, lang })))
+      if (!started.current) {
+        started.current = true
+        generateAll(w, lang)
+      }
     })
   }, [router])
 
-  useEffect(() => {
-    if (words.length === 0 || started.current) return
-    started.current = true
-    generateAll(words)
-  }, [words])
-
-  const generateAll = async (wordList: Word[]) => {
-    const res: Result[] = wordList.map(w => ({ word: w, image: null, error: null }))
+  const generateAll = async (wordList: Word[], lang: string) => {
+    const res: Result[] = wordList.map(w => ({ word: w, image: null, error: null, lang }))
     for (let i = 0; i < wordList.length; i++) {
       setCurrent(i)
       try {
@@ -40,9 +42,9 @@ export default function GeneratePage() {
           body: JSON.stringify({ word: wordList[i], type: wordList[i].type }),
         })
         const data = await r.json()
-        res[i] = { word: wordList[i], image: data.image || null, error: data.error || null }
+        res[i] = { word: wordList[i], image: data.image || null, error: data.error || null, lang }
       } catch {
-        res[i] = { word: wordList[i], image: null, error: '생성 실패' }
+        res[i] = { word: wordList[i], image: null, error: '생성 실패', lang }
       }
       setResults([...res])
     }
