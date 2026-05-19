@@ -13,7 +13,10 @@ type CardState = {
   comment: string
   regenerating: boolean
   newImage: string | null
+  isNew: boolean
 }
+
+type FilterType = 'all' | 'approved' | 'pending' | 'regenerated'
 
 const TYPE_LABELS: Record<string, string> = {
   A: 'A — 사물/장소', B: 'B — 직업/역할', C: 'C — 동사/감정', D: 'D — 자연/계절',
@@ -33,6 +36,7 @@ export default function ReviewPage() {
   const router = useRouter()
   const fileRef = useRef<HTMLInputElement>(null)
   const [cards, setCards] = useState<CardState[]>([])
+  const [filter, setFilter] = useState<FilterType>('all')
   const [expandedComment, setExpandedComment] = useState<number | null>(null)
   const [refImages, setRefImages] = useState<Record<number, string>>({})
   const [lbRefImage, setLbRefImage] = useState<string | null>(null)
@@ -46,10 +50,10 @@ export default function ReviewPage() {
   useEffect(() => {
     Promise.all([
       idbGet<Result[]>('vocab-results'),
-      idbGet<{ id: string; status: Status; comment: string }[]>('vocab-card-statuses'),
+      idbGet<{ id: string; status: Status; comment: string; isNew?: boolean }[]>('vocab-card-statuses'),
     ]).then(([results, statuses]) => {
       if (!results) { router.push('/'); return }
-      const statusMap: Record<string, { status: Status; comment: string }> =
+      const statusMap: Record<string, { status: Status; comment: string; isNew?: boolean }> =
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => ({
         result: r,
@@ -57,6 +61,7 @@ export default function ReviewPage() {
         comment: statusMap[r.word.id]?.comment ?? '',
         regenerating: false,
         newImage: null,
+        isNew: statusMap[r.word.id]?.isNew ?? false,
       })))
     })
   }, [router])
@@ -65,12 +70,22 @@ export default function ReviewPage() {
     if (cards.length === 0) return
     const results = cards.map(c => ({ ...c.result, image: c.newImage ?? c.result.image }))
     idbSet('vocab-results', results)
-    const statuses = cards.map(c => ({ id: c.result.word.id, status: c.status, comment: c.comment }))
+    const statuses = cards.map(c => ({ id: c.result.word.id, status: c.status, comment: c.comment, isNew: c.isNew }))
     idbSet('vocab-card-statuses', statuses)
   }, [cards])
 
   const setStatus = (idx: number, status: Status) => {
-    setCards(prev => prev.map((c, i) => i === idx ? { ...c, status } : c))
+    setCards(prev => prev.map((c, i) =>
+      i === idx ? { ...c, status, isNew: status === 'approved' ? false : c.isNew } : c
+    ))
+  }
+
+  const deleteCard = (idx: number) => {
+    if (lightbox !== null) {
+      if (lightbox === idx) closeLightbox()
+      else if (lightbox > idx) setLightbox(prev => prev !== null ? prev - 1 : null)
+    }
+    setCards(prev => prev.filter((_, i) => i !== idx))
   }
 
   const setComment = (idx: number, comment: string) => {
@@ -87,7 +102,7 @@ export default function ReviewPage() {
 
   const regenerate = async (idx: number, referenceImage?: string) => {
     const card = cards[idx]
-    setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: true } : c))
+    setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: true, isNew: false } : c))
     setLightboxComment(false)
     setRefImages(prev => { const n = { ...prev }; delete n[idx]; return n })
     setLbRefImage(null)
@@ -104,7 +119,7 @@ export default function ReviewPage() {
       })
       const data = await r.json()
       setCards(prev => prev.map((c, i) =>
-        i === idx ? { ...c, regenerating: false, newImage: data.image || null, status: 'pending' } : c
+        i === idx ? { ...c, regenerating: false, newImage: data.image || null, status: 'pending', isNew: true } : c
       ))
     } catch {
       setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: false } : c))
@@ -185,7 +200,7 @@ export default function ReviewPage() {
     setAddGenerating(true)
     const newCards: CardState[] = addWords.map(w => ({
       result: { word: w, image: null, error: null },
-      status: 'pending', comment: '', regenerating: true, newImage: null,
+      status: 'pending', comment: '', regenerating: true, newImage: null, isNew: false,
     }))
     setCards(prev => [...prev, ...newCards])
     setAddPanel(false)
@@ -218,6 +233,12 @@ export default function ReviewPage() {
 
   const approvedCount = cards.filter(c => c.status === 'approved').length
   const pendingCount = cards.filter(c => c.status === 'pending').length
+  const regeneratedCount = cards.filter(c => c.isNew).length
+  const filteredCards: { card: CardState; idx: number }[] =
+    filter === 'all' ? cards.map((card, idx) => ({ card, idx })) :
+    filter === 'approved' ? cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.status === 'approved') :
+    filter === 'pending' ? cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.status !== 'approved') :
+    cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.isNew)
   const lbCard = lightbox !== null ? cards[lightbox] : null
 
   return (
@@ -311,9 +332,36 @@ export default function ReviewPage() {
           </div>
         )}
 
+        {/* Filter tabs */}
+        <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-xl w-fit">
+          {([
+            ['all', '전체', cards.length],
+            ['approved', '승인됨', approvedCount],
+            ['pending', '승인전', cards.filter(c => c.status !== 'approved').length],
+            ['regenerated', '재생성', regeneratedCount],
+          ] as [FilterType, string, number][]).map(([key, label, count]) => (
+            <button
+              key={key}
+              onClick={() => setFilter(key)}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                filter === key
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {label}
+              {count > 0 && (
+                <span className={`ml-1.5 text-xs tabular-nums ${filter === key ? 'text-gray-400' : 'text-gray-400'}`}>
+                  {count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
         {/* Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-          {cards.map((card, idx) => {
+          {filteredCards.map(({ card, idx }) => {
             const img = card.newImage || card.result.image
             return (
               <div
@@ -346,9 +394,16 @@ export default function ReviewPage() {
                       생성 실패
                     </div>
                   )}
+
+                  {/* Status / NEW badges */}
                   {card.status === 'approved' && (
                     <div className="absolute top-2 right-2 bg-teal-500 text-white text-xs px-2 py-0.5 rounded-full">
                       승인
+                    </div>
+                  )}
+                  {card.isNew && !card.regenerating && (
+                    <div className="absolute top-2 left-2 bg-orange-400 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
+                      NEW
                     </div>
                   )}
                 </div>
@@ -382,6 +437,13 @@ export default function ReviewPage() {
                       className="w-7 py-1.5 bg-gray-100 text-gray-500 rounded-md text-xs font-medium hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
                     >
                       ↓
+                    </button>
+                    <button
+                      onClick={() => deleteCard(idx)}
+                      title="삭제"
+                      className="w-7 py-1.5 bg-gray-100 text-gray-400 rounded-md text-xs font-medium hover:bg-red-50 hover:text-red-400 transition-colors flex items-center justify-center"
+                    >
+                      ✕
                     </button>
                   </div>
 
@@ -483,9 +545,12 @@ export default function ReviewPage() {
                 ✕
               </button>
 
-              {/* Status badge */}
+              {/* Status / NEW badges */}
               {lbCard.status === 'approved' && (
                 <div className="absolute top-3 left-3 bg-teal-500 text-white text-xs px-2.5 py-1 rounded-full">승인</div>
+              )}
+              {lbCard.isNew && !lbCard.regenerating && (
+                <div className="absolute top-3 left-3 bg-orange-400 text-white text-xs px-2.5 py-1 rounded-full font-semibold">NEW</div>
               )}
             </div>
 
@@ -523,6 +588,13 @@ export default function ReviewPage() {
                   className="px-4 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-200 disabled:opacity-30 transition-colors"
                 >
                   ↓ 저장
+                </button>
+                <button
+                  onClick={() => deleteCard(lightbox)}
+                  title="삭제"
+                  className="px-4 py-2.5 bg-gray-100 text-gray-400 rounded-xl text-sm font-medium hover:bg-red-50 hover:text-red-400 transition-colors"
+                >
+                  삭제
                 </button>
               </div>
 
