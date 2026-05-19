@@ -13,11 +13,33 @@ const TYPE_LABELS: Record<string, string> = {
   D: 'D — 자연/계절',
 }
 
+function detectLang(text: string): string {
+  if (!text) return ''
+  if (/[぀-ヿ]/.test(text)) return 'JP'    // hiragana/katakana
+  if (/[؀-ۿ]/.test(text)) return 'AR'    // Arabic
+  if (/[Ѐ-ӿ]/.test(text)) return 'RU'    // Cyrillic
+  if (/[一-鿿]/.test(text)) return 'ZH'    // CJK
+  if (/[ñÑ¿¡]/.test(text)) return 'ES'             // Spanish markers
+  if (/[çÇœŒæÆ]/.test(text)) return 'FR'           // French markers
+  if (/[a-zA-Z]/.test(text)) return 'EN'
+  return ''
+}
+
+function autoDetectLang(words: Word[]): string {
+  const counts: Record<string, number> = {}
+  for (const w of words) {
+    const l = detectLang(w.en)
+    if (l) counts[l] = (counts[l] || 0) + 1
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
+}
+
 function parseLines(text: string): Word[] {
   return text.trim().split('\n')
     .filter(l => l.trim())
     .map((line, i) => {
-      const parts = line.split(/[|,\t]/).map(p => p.trim())
+      // Support: | , tab  /  :  (slash requires surrounding spaces to avoid splitting words like "P/E")
+      const parts = line.split(/[|,\t]|\s+\/\s+|\s*:\s*/).map(p => p.trim())
       return {
         id: `WORD${String(i + 1).padStart(3, '0')}`,
         en: parts[0] || '',
@@ -43,8 +65,7 @@ function HomeContent() {
     const unit = searchParams.get('unit')
     const data = searchParams.get('data')
     if (course && unit) {
-      const info = `${course} Unit ${unit}`
-      setCourseInfo(info)
+      setCourseInfo(`${course} Unit ${unit}`)
       setLang(course)
     }
     if (data) {
@@ -60,6 +81,7 @@ function HomeContent() {
     if (parsed.length === 0) { setError('단어를 입력해주세요'); return }
     setWords(parsed)
     setError('')
+    if (!lang) setLang(autoDetectLang(parsed))
   }
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -72,6 +94,7 @@ function HomeContent() {
       if (parsed.length === 0) { setError('파일에서 단어를 찾을 수 없습니다'); return }
       setWords(parsed)
       setError('')
+      if (!lang) setLang(autoDetectLang(parsed))
     }
     reader.readAsText(file)
     e.target.value = ''
@@ -103,28 +126,32 @@ function HomeContent() {
             <input
               value={lang}
               onChange={e => setLang(e.target.value.toUpperCase())}
-              placeholder="ESEN, JPEN, KR..."
+              placeholder="자동 감지 (EN, JP, ES...)"
               maxLength={10}
-              className="w-32 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              className="w-44 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400"
             />
-            <span className="text-xs text-gray-400">언어별로 일러스트를 분류합니다</span>
+            {lang && (
+              <span className="px-2 py-0.5 bg-teal-50 text-teal-600 text-xs rounded-full font-medium border border-teal-100">{lang}</span>
+            )}
           </div>
 
           <div className="flex items-center justify-between mb-1">
             <label className="block text-sm font-medium text-gray-700">단어 입력</label>
             <button
               onClick={() => fileRef.current?.click()}
-              className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1"
+              className="text-xs text-teal-600 hover:text-teal-700 font-medium"
             >
               파일 업로드 (CSV / TXT)
             </button>
             <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleFile} />
           </div>
-          <p className="text-xs text-gray-400 mb-3">형식: <code className="bg-gray-100 px-1 rounded">영어 | 한국어</code> 또는 <code className="bg-gray-100 px-1 rounded">영어, 한국어</code> (한 줄에 하나씩)</p>
+          <p className="text-xs text-gray-400 mb-3">
+            형식: <code className="bg-gray-100 px-1 rounded">학습어 | 모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어 / 모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어 : 모국어</code>
+          </p>
           <textarea
             value={manualText}
             onChange={e => setManualText(e.target.value)}
-            placeholder={`T-shirt | 티셔츠\ndress | 원피스\nsweater | 니트`}
+            placeholder={`apple | 사과\ndog / 개\ncat : 고양이`}
             rows={8}
             className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
           />
