@@ -41,7 +41,7 @@ function detectLang(text: string): string {
 function detectCourseTag(targetWord: string, nativeWord: string): string {
   const target = detectLang(targetWord)
   const native = detectLang(nativeWord)
-  if (target && native && target !== native) return native + target
+  if (target && native && target !== native) return target + native
   return target || ''
 }
 
@@ -90,10 +90,13 @@ export default function ReviewPage() {
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => {
         const savedLangs = statusMap[r.word.id]?.langs
-        // autoLang from word content is always primary — avoids stale IDB data
-        const autoLang = detectCourseTag(r.word.en, r.word.ko)
-        const extraLangs = (savedLangs || []).filter(l => l.length >= 4 && l !== autoLang)
-        const langs = autoLang ? [autoLang, ...extraLangs] : extraLangs
+        // r.lang (set by user on home page) is the only reliable source for ENKO/KOEN
+        // — auto-detecting from word content is impossible for bilingual pairs
+        const sourceLang = r.lang && r.lang.length >= 4 ? r.lang : null
+        const autoLang = !sourceLang ? detectCourseTag(r.word.en, r.word.ko) : null
+        const baseLang = sourceLang || autoLang || ''
+        const extraLangs = (savedLangs || []).filter(l => l.length >= 4 && l !== baseLang)
+        const langs = baseLang ? [baseLang, ...extraLangs] : extraLangs
         return {
           result: r,
           status: statusMap[r.word.id]?.status ?? 'pending',
