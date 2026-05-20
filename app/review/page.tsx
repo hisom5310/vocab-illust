@@ -25,14 +25,22 @@ const TYPE_LABELS: Record<string, string> = {
 
 function detectLang(text: string): string {
   if (!text) return ''
-  if (/[぀-ヿ]/.test(text)) return 'JP'
+  if (/[぀-ヿ]/.test(text)) return 'JA'
+  if (/[가-힣]/.test(text)) return 'KO'
   if (/[؀-ۿ]/.test(text)) return 'AR'
   if (/[Ѐ-ӿ]/.test(text)) return 'RU'
   if (/[一-鿿]/.test(text)) return 'ZH'
   if (/[ñÑ¿¡]/.test(text)) return 'ES'
-  if (/[çÇœŒæÆ]/.test(text)) return 'FR'
+  if (/[çÇœŒæÆèéêëàâîïôùûü]/.test(text)) return 'FR'
   if (/[a-zA-Z]/.test(text)) return 'EN'
   return ''
+}
+
+function detectCourseTag(targetWord: string, nativeWord: string): string {
+  const target = detectLang(targetWord)
+  const native = detectLang(nativeWord)
+  if (target && native && target !== native) return target + native
+  return target || ''
 }
 
 function parseLines(text: string, startIdx: number): Word[] {
@@ -73,7 +81,7 @@ export default function ReviewPage() {
       setCards(results.map(r => {
         const savedLangs = statusMap[r.word.id]?.langs
         // Auto-detect from word if not previously saved
-        const autoLang = detectLang(r.word.en)
+        const autoLang = detectCourseTag(r.word.en, r.word.ko)
         const langs = (savedLangs && savedLangs.length > 0)
           ? savedLangs
           : r.lang ? [r.lang] : autoLang ? [autoLang] : []
@@ -202,7 +210,7 @@ export default function ReviewPage() {
     const currentCards = cards
 
     // Auto-detect lang from words if addLang is empty
-    const detectedLang = addWords.map(w => detectLang(w.en)).find(l => l) || ''
+    const detectedLang = detectCourseTag(addWords[0]?.en || '', addWords[0]?.ko || '')
     const lang = (addLang.trim().toUpperCase()) || detectedLang
 
     const duplicateIndices: number[] = []
