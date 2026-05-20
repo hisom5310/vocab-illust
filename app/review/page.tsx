@@ -83,9 +83,11 @@ export default function ReviewPage() {
         const autoLang = detectCourseTag(r.word.en, r.word.ko)
         // Migrate old short codes (EN, JA...) → 4-char course tags (KOEN, JAEN...)
         const hasValidLangs = savedLangs && savedLangs.length > 0 && savedLangs.every(l => l.length >= 4)
+        // ENKO → KOEN: old data had English in col1, Korean in col2 (reversed order)
+        const normalizeLang = (l: string) => l === 'ENKO' ? 'KOEN' : l
         const langs = hasValidLangs
-          ? savedLangs!
-          : autoLang ? [autoLang] : []
+          ? savedLangs!.map(normalizeLang)
+          : autoLang ? [normalizeLang(autoLang)] : []
         return {
           result: r,
           status: statusMap[r.word.id]?.status ?? 'pending',
@@ -211,7 +213,8 @@ export default function ReviewPage() {
     const currentCards = cards
 
     // Auto-detect lang from words if addLang is empty
-    const detectedLang = detectCourseTag(addWords[0]?.en || '', addWords[0]?.ko || '')
+    const raw = detectCourseTag(addWords[0]?.en || '', addWords[0]?.ko || '')
+    const detectedLang = raw === 'ENKO' ? 'KOEN' : raw
     const lang = (addLang.trim().toUpperCase()) || detectedLang
 
     const duplicateIndices: number[] = []
