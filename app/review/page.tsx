@@ -80,11 +80,12 @@ export default function ReviewPage() {
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => {
         const savedLangs = statusMap[r.word.id]?.langs
-        // Auto-detect from word if not previously saved
         const autoLang = detectCourseTag(r.word.en, r.word.ko)
-        const langs = (savedLangs && savedLangs.length > 0)
-          ? savedLangs
-          : r.lang ? [r.lang] : autoLang ? [autoLang] : []
+        // Migrate old short codes (EN, JA...) → 4-char course tags (KOEN, JAEN...)
+        const hasValidLangs = savedLangs && savedLangs.length > 0 && savedLangs.every(l => l.length >= 4)
+        const langs = hasValidLangs
+          ? savedLangs!
+          : autoLang ? [autoLang] : []
         return {
           result: r,
           status: statusMap[r.word.id]?.status ?? 'pending',
@@ -392,12 +393,12 @@ export default function ReviewPage() {
                 <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleAddFile} />
               </div>
               <p className="text-xs text-gray-400 mb-3">
-                형식: <code className="bg-gray-100 px-1 rounded">학습어 | 모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어 / 모국어</code>
+                형식: <code className="bg-gray-100 px-1 rounded">모국어 | 학습어</code> 또는 <code className="bg-gray-100 px-1 rounded">모국어 / 학습어</code>
               </p>
               <textarea
                 value={addText}
                 onChange={e => setAddText(e.target.value)}
-                placeholder={`jacket | 재킷\nhat / 모자`}
+                placeholder={`재킷 | jacket\n모자 / hat`}
                 rows={4}
                 className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none mb-3"
               />

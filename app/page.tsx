@@ -13,23 +13,33 @@ const TYPE_LABELS: Record<string, string> = {
   D: 'D — 자연/계절',
 }
 
+// 언어 코드: 학습어/모국어 각 컬럼의 문자 분석
 function detectLang(text: string): string {
   if (!text) return ''
-  if (/[぀-ヿ]/.test(text)) return 'JP'    // hiragana/katakana
-  if (/[؀-ۿ]/.test(text)) return 'AR'    // Arabic
-  if (/[Ѐ-ӿ]/.test(text)) return 'RU'    // Cyrillic
-  if (/[一-鿿]/.test(text)) return 'ZH'    // CJK
-  if (/[ñÑ¿¡]/.test(text)) return 'ES'             // Spanish markers
-  if (/[çÇœŒæÆ]/.test(text)) return 'FR'           // French markers
+  if (/[぀-ヿ]/.test(text)) return 'JA'  // 히라가나/가타카나 → Japanese
+  if (/[가-힣]/.test(text)) return 'KO'  // 한글 → Korean
+  if (/[؀-ۿ]/.test(text)) return 'AR'  // Arabic
+  if (/[Ѐ-ӿ]/.test(text)) return 'RU'  // Cyrillic
+  if (/[一-鿿]/.test(text)) return 'ZH'  // CJK (일본어 체크 후)
+  if (/[ñÑ¿¡]/.test(text)) return 'ES'           // 스페인어 특수문자
+  if (/[çÇœŒæÆèéêëàâîïôùûü]/.test(text)) return 'FR'  // 프랑스어 특수문자
   if (/[a-zA-Z]/.test(text)) return 'EN'
   return ''
+}
+
+// 학습어 + 모국어 두 컬럼으로 코스 태그 생성 (e.g. "apple|사과" → "ENKO")
+function detectCourseTag(targetWord: string, nativeWord: string): string {
+  const target = detectLang(targetWord)
+  const native = detectLang(nativeWord)
+  if (target && native && target !== native) return target + native
+  return target || ''
 }
 
 function autoDetectLang(words: Word[]): string {
   const counts: Record<string, number> = {}
   for (const w of words) {
-    const l = detectLang(w.en)
-    if (l) counts[l] = (counts[l] || 0) + 1
+    const tag = detectCourseTag(w.en, w.ko)
+    if (tag) counts[tag] = (counts[tag] || 0) + 1
   }
   return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
 }
@@ -146,12 +156,12 @@ function HomeContent() {
             <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleFile} />
           </div>
           <p className="text-xs text-gray-400 mb-3">
-            형식: <code className="bg-gray-100 px-1 rounded">학습어 | 모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어 / 모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어 : 모국어</code>
+            형식: <code className="bg-gray-100 px-1 rounded">모국어 | 학습어</code> 또는 <code className="bg-gray-100 px-1 rounded">모국어 / 학습어</code> 또는 <code className="bg-gray-100 px-1 rounded">모국어 : 학습어</code>
           </p>
           <textarea
             value={manualText}
             onChange={e => setManualText(e.target.value)}
-            placeholder={`apple | 사과\ndog / 개\ncat : 고양이`}
+            placeholder={`사과 | apple\n개 / dog\n고양이 : cat`}
             rows={8}
             className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
           />
