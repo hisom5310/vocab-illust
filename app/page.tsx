@@ -13,6 +13,8 @@ const TYPE_LABELS: Record<string, string> = {
   D: 'D — 자연/계절',
 }
 
+const PRESET_LANGS = ['ENKO', 'KOEN', 'FREN', 'JAEN', 'KOJA', 'KOFR', 'ESEN']
+
 // 언어 코드: 학습어/모국어 각 컬럼의 문자 분석
 function detectLang(text: string): string {
   if (!text) return ''
@@ -138,19 +140,31 @@ function HomeContent() {
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-          {/* Lang tag */}
-          <div className="flex items-center gap-3 mb-5 pb-5 border-b border-gray-100">
-            <label className="text-sm font-medium text-gray-700 shrink-0">언어 태그</label>
-            <input
-              value={lang}
-              onChange={e => setLang(e.target.value.toUpperCase())}
-              placeholder="자동 감지 (EN, JP, ES...)"
-              maxLength={10}
-              className="w-44 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400"
-            />
-            {lang && (
-              <span className="px-2 py-0.5 bg-teal-50 text-teal-600 text-xs rounded-full font-medium border border-teal-100">{lang}</span>
-            )}
+          {/* Lang selector */}
+          <div className="mb-5 pb-5 border-b border-gray-100">
+            <label className="text-sm font-medium text-gray-700 block mb-3">언어 선택</label>
+            <div className="flex flex-wrap gap-2">
+              {PRESET_LANGS.map(tag => (
+                <button
+                  key={tag}
+                  onClick={() => setLang(lang === tag ? '' : tag)}
+                  className={`px-3.5 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
+                    lang === tag
+                      ? 'bg-teal-500 text-white border-teal-500'
+                      : 'bg-white text-gray-500 border-gray-200 hover:border-teal-400 hover:text-teal-600'
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
+              <input
+                value={PRESET_LANGS.includes(lang) ? '' : lang}
+                onChange={e => setLang(e.target.value.toUpperCase())}
+                placeholder="직접 입력"
+                maxLength={6}
+                className="w-24 border border-gray-200 rounded-full px-3 py-1.5 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </div>
           </div>
 
           <div className="flex items-center justify-between mb-1">

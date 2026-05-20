@@ -91,14 +91,11 @@ export default function ReviewPage() {
       setCards(results.map(r => {
         const savedLangs = statusMap[r.word.id]?.langs
         const sourceLang = r.lang && r.lang.length >= 4 ? r.lang : null
-        const savedValidLangs = (savedLangs || []).filter(l => l.length >= 4)
+        const savedValidLang = (savedLangs || []).find(l => l.length >= 4)
         const autoLang = detectCourseTag(r.word.en, r.word.ko)
-        // Priority: r.lang (from generate page) > savedLangs (from add panel) > autoLang
-        const langs = sourceLang
-          ? [sourceLang]
-          : savedValidLangs.length > 0
-            ? savedValidLangs
-            : autoLang ? [autoLang] : []
+        // Single lang per card. Priority: r.lang > savedLangs (first) > autoLang
+        const primaryLang = sourceLang || savedValidLang || autoLang
+        const langs = primaryLang ? [primaryLang] : []
         return {
           result: r,
           status: statusMap[r.word.id]?.status ?? 'pending',
@@ -387,16 +384,30 @@ export default function ReviewPage() {
           {/* ③ Add panel */}
           {addPanel && (
             <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-              <div className="flex items-center gap-3 mb-4 pb-4 border-b border-gray-100">
-                <label className="text-xs font-medium text-gray-600 shrink-0">언어 태그</label>
-                <input
-                  value={addLang}
-                  onChange={e => setAddLang(e.target.value.toUpperCase())}
-                  placeholder="자동 감지 (EN, JP...)"
-                  maxLength={10}
-                  className="w-44 border border-gray-200 rounded-md px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                />
-                <span className="text-xs text-gray-400">비워두면 단어에서 자동 감지</span>
+              <div className="mb-4 pb-4 border-b border-gray-100">
+                <label className="text-xs font-medium text-gray-600 block mb-2">언어 선택</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {PRESET_LANGS.map(tag => (
+                    <button
+                      key={tag}
+                      onClick={() => setAddLang(addLang === tag ? '' : tag)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-full border transition-colors ${
+                        addLang === tag
+                          ? 'bg-teal-500 text-white border-teal-500'
+                          : 'bg-white text-gray-500 border-gray-200 hover:border-teal-400 hover:text-teal-600'
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                  <input
+                    value={PRESET_LANGS.includes(addLang) ? '' : addLang}
+                    onChange={e => setAddLang(e.target.value.toUpperCase())}
+                    placeholder="직접 입력"
+                    maxLength={6}
+                    className="w-20 border border-gray-200 rounded-full px-2.5 py-1 text-xs text-gray-900 focus:outline-none focus:ring-1 focus:ring-teal-400"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center justify-between mb-1">
