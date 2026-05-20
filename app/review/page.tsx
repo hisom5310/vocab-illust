@@ -47,7 +47,15 @@ function parseLines(text: string, startIdx: number): Word[] {
   return text.trim().split('\n')
     .filter(l => l.trim())
     .map((line, i) => {
-      const parts = line.split(/[|,\t]|\s+\/\s+|\s*:\s*/).map(p => p.trim())
+      let parts = line.split(/[|,\t\/]|\s*:\s*/).map(p => p.trim()).filter(Boolean)
+      if (parts.length < 2) {
+        const tokens = line.trim().split(/\s+/)
+        let boundary = -1
+        for (let j = 1; j < tokens.length; j++) {
+          if (detectLang(tokens[j - 1]) !== detectLang(tokens[j])) { boundary = j; break }
+        }
+        if (boundary > 0) parts = [tokens.slice(0, boundary).join(' '), tokens.slice(boundary).join(' ')]
+      }
       return { id: `WORD${String(startIdx + i + 1).padStart(3, '0')}`, en: parts[0] || '', ko: parts[1] || '', type: 'A' as const }
     })
     .filter(w => w.en && w.ko)
@@ -79,22 +87,28 @@ export default function ReviewPage() {
       const statusMap: Record<string, { status: Status; comment: string; isNew?: boolean; langs?: string[] }> =
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => {
-        const savedLangs = statusMap[r.word.id]?.langs
-        const autoLang = detectCourseTag(r.word.en, r.word.ko)
-        // Migrate old short codes (EN, JA...) → 4-char course tags (KOEN, JAEN...)
-        const hasValidLangs = savedLangs && savedLangs.length > 0 && savedLangs.every(l => l.length >= 4)
-        // ENKO → KOEN: old data had English in col1, Korean in col2 (reversed order)
+        // Migrate old format: en=English, ko=Korean → swap so en=학습어, ko=모국어
+        const enLang = detectLang(r.word.en)
+        const koLang = detectLang(r.word.ko)
+        const word = (enLang === 'EN' && koLang === 'KO')
+          ? { ...r.word, en: r.word.ko, ko: r.word.en }
+          : r.word
+        const result = word !== r.word ? { ...r, word } : r
+
+        const savedLangs = statusMap[word.id]?.langs
+        const autoLang = detectCourseTag(word.en, word.ko)
         const normalizeLang = (l: string) => l === 'ENKO' ? 'KOEN' : l
+        const hasValidLangs = savedLangs && savedLangs.length > 0 && savedLangs.every(l => l.length >= 4)
         const langs = hasValidLangs
           ? savedLangs!.map(normalizeLang)
           : autoLang ? [normalizeLang(autoLang)] : []
         return {
-          result: r,
-          status: statusMap[r.word.id]?.status ?? 'pending',
-          comment: statusMap[r.word.id]?.comment ?? '',
+          result,
+          status: statusMap[word.id]?.status ?? 'pending',
+          comment: statusMap[word.id]?.comment ?? '',
           regenerating: false,
           newImage: null,
-          isNew: statusMap[r.word.id]?.isNew ?? false,
+          isNew: statusMap[word.id]?.isNew ?? false,
           langs,
         }
       }))
@@ -396,12 +410,12 @@ export default function ReviewPage() {
                 <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleAddFile} />
               </div>
               <p className="text-xs text-gray-400 mb-3">
-                형식: <code className="bg-gray-100 px-1 rounded">모국어 | 학습어</code> 또는 <code className="bg-gray-100 px-1 rounded">모국어 / 학습어</code>
+                형식: <code className="bg-gray-100 px-1 rounded">학습어 | 모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어/모국어</code>
               </p>
               <textarea
                 value={addText}
                 onChange={e => setAddText(e.target.value)}
-                placeholder={`재킷 | jacket\n모자 / hat`}
+                placeholder={`사과/apple\n티셔츠 | T-shirt`}
                 rows={4}
                 className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none mb-3"
               />

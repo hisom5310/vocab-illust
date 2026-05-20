@@ -48,8 +48,16 @@ function parseLines(text: string): Word[] {
   return text.trim().split('\n')
     .filter(l => l.trim())
     .map((line, i) => {
-      // Support: | , tab  /  :  (slash requires surrounding spaces to avoid splitting words like "P/E")
-      const parts = line.split(/[|,\t]|\s+\/\s+|\s*:\s*/).map(p => p.trim())
+      let parts = line.split(/[|,\t\/]|\s*:\s*/).map(p => p.trim()).filter(Boolean)
+      // Space fallback: "사과 apple" — detect language boundary
+      if (parts.length < 2) {
+        const tokens = line.trim().split(/\s+/)
+        let boundary = -1
+        for (let j = 1; j < tokens.length; j++) {
+          if (detectLang(tokens[j - 1]) !== detectLang(tokens[j])) { boundary = j; break }
+        }
+        if (boundary > 0) parts = [tokens.slice(0, boundary).join(' '), tokens.slice(boundary).join(' ')]
+      }
       return {
         id: `WORD${String(i + 1).padStart(3, '0')}`,
         en: parts[0] || '',
@@ -156,12 +164,12 @@ function HomeContent() {
             <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleFile} />
           </div>
           <p className="text-xs text-gray-400 mb-3">
-            형식: <code className="bg-gray-100 px-1 rounded">모국어 | 학습어</code> 또는 <code className="bg-gray-100 px-1 rounded">모국어 / 학습어</code> 또는 <code className="bg-gray-100 px-1 rounded">모국어 : 학습어</code>
+            형식: <code className="bg-gray-100 px-1 rounded">학습어 | 모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어/모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어 모국어</code>
           </p>
           <textarea
             value={manualText}
             onChange={e => setManualText(e.target.value)}
-            placeholder={`사과 | apple\n개 / dog\n고양이 : cat`}
+            placeholder={`사과/apple\n티셔츠 | T-shirt\n개 dog`}
             rows={8}
             className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
           />
