@@ -99,7 +99,7 @@ function HomeContent() {
     if (parsed.length === 0) { setError('단어를 입력해주세요'); return }
     setWords(parsed)
     setError('')
-    if (!lang) setLang(autoDetectLang(parsed))
+    setLang(autoDetectLang(parsed))
   }
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,7 +112,7 @@ function HomeContent() {
       if (parsed.length === 0) { setError('파일에서 단어를 찾을 수 없습니다'); return }
       setWords(parsed)
       setError('')
-      if (!lang) setLang(autoDetectLang(parsed))
+      setLang(autoDetectLang(parsed))
     }
     reader.readAsText(file)
     e.target.value = ''

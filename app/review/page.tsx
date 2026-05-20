@@ -88,13 +88,13 @@ export default function ReviewPage() {
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => {
         const savedLangs = statusMap[r.word.id]?.langs
-        // r.lang (set by home page lang input) is most reliable → use if 4-char course tag
         const sourceLang = r.lang && r.lang.length >= 4 ? r.lang : null
         const autoLang = detectCourseTag(r.word.en, r.word.ko)
-        const hasValidLangs = savedLangs && savedLangs.length > 0 && savedLangs.every(l => l.length >= 4)
-        const langs = hasValidLangs
-          ? savedLangs!
-          : sourceLang ? [sourceLang] : autoLang ? [autoLang] : []
+        // sourceLang (from generate page) is most authoritative → always use it as primary
+        // savedLangs may contain extra tags (multi-lang) → merge them in, but source wins
+        const primaryLang = sourceLang || autoLang
+        const extraLangs = (savedLangs || []).filter(l => l.length >= 4 && l !== primaryLang)
+        const langs = primaryLang ? [primaryLang, ...extraLangs] : extraLangs
         return {
           result: r,
           status: statusMap[r.word.id]?.status ?? 'pending',
@@ -264,7 +264,7 @@ export default function ReviewPage() {
         const data = await r.json()
         setCards(prev => prev.map((c, ci) =>
           ci === startIdx + i
-            ? { ...c, regenerating: false, result: { ...c.result, image: data.image || null, error: data.error || null } }
+            ? { ...c, regenerating: false, isNew: true, result: { ...c.result, image: data.image || null, error: data.error || null } }
             : c
         ))
       } catch {
