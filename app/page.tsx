@@ -31,7 +31,7 @@ function detectLang(text: string): string {
 function detectCourseTag(targetWord: string, nativeWord: string): string {
   const target = detectLang(targetWord)
   const native = detectLang(nativeWord)
-  if (target && native && target !== native) return target + native
+  if (target && native && target !== native) return native + target
   return target || ''
 }
 
