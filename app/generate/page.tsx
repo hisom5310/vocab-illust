@@ -51,6 +51,7 @@ export default function GeneratePage() {
     setCurrent(-1)
     setDone(true)
     await idbSet('vocab-results', res)
+    await idbSet('vocab-card-statuses', [])  // clear stale statuses from previous batch
     router.push('/review')
   }
 

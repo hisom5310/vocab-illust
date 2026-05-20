@@ -90,11 +90,13 @@ export default function ReviewPage() {
         const savedLangs = statusMap[r.word.id]?.langs
         const sourceLang = r.lang && r.lang.length >= 4 ? r.lang : null
         const autoLang = detectCourseTag(r.word.en, r.word.ko)
-        // sourceLang (from generate page) is most authoritative → always use it as primary
-        // savedLangs may contain extra tags (multi-lang) → merge them in, but source wins
-        const primaryLang = sourceLang || autoLang
-        const extraLangs = (savedLangs || []).filter(l => l.length >= 4 && l !== primaryLang)
-        const langs = primaryLang ? [primaryLang, ...extraLangs] : extraLangs
+        // sourceLang from generate page is authoritative → ignore savedLangs when available
+        // savedLangs used only when no sourceLang (words added via add panel)
+        const langs = sourceLang
+          ? [sourceLang]
+          : (savedLangs?.filter(l => l.length >= 4) ?? []).length > 0
+            ? savedLangs!.filter(l => l.length >= 4)
+            : autoLang ? [autoLang] : []
         return {
           result: r,
           status: statusMap[r.word.id]?.status ?? 'pending',
