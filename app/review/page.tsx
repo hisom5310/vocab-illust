@@ -90,13 +90,15 @@ export default function ReviewPage() {
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => {
         const savedLangs = statusMap[r.word.id]?.langs
-        // r.lang (set by user on home page) is the only reliable source for ENKO/KOEN
-        // — auto-detecting from word content is impossible for bilingual pairs
         const sourceLang = r.lang && r.lang.length >= 4 ? r.lang : null
-        const autoLang = !sourceLang ? detectCourseTag(r.word.en, r.word.ko) : null
-        const baseLang = sourceLang || autoLang || ''
-        const extraLangs = (savedLangs || []).filter(l => l.length >= 4 && l !== baseLang)
-        const langs = baseLang ? [baseLang, ...extraLangs] : extraLangs
+        const savedValidLangs = (savedLangs || []).filter(l => l.length >= 4)
+        const autoLang = detectCourseTag(r.word.en, r.word.ko)
+        // Priority: r.lang (from generate page) > savedLangs (from add panel) > autoLang
+        const langs = sourceLang
+          ? [sourceLang]
+          : savedValidLangs.length > 0
+            ? savedValidLangs
+            : autoLang ? [autoLang] : []
         return {
           result: r,
           status: statusMap[r.word.id]?.status ?? 'pending',
