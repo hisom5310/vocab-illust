@@ -23,6 +23,8 @@ const TYPE_LABELS: Record<string, string> = {
   A: 'A — 사물/장소', B: 'B — 직업/역할', C: 'C — 동사/감정', D: 'D — 자연/계절',
 }
 
+const PRESET_LANGS = ['ENKO', 'FREN', 'JAEN', 'KOEN', 'KOJA', 'KOFR', 'ESEN']
+
 function detectLang(text: string): string {
   if (!text) return ''
   if (/[぀-ヿ]/.test(text)) return 'JA'
@@ -88,15 +90,10 @@ export default function ReviewPage() {
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => {
         const savedLangs = statusMap[r.word.id]?.langs
-        const sourceLang = r.lang && r.lang.length >= 4 ? r.lang : null
+        // autoLang from word content is always primary — avoids stale IDB data
         const autoLang = detectCourseTag(r.word.en, r.word.ko)
-        // sourceLang from generate page is authoritative → ignore savedLangs when available
-        // savedLangs used only when no sourceLang (words added via add panel)
-        const langs = sourceLang
-          ? [sourceLang]
-          : (savedLangs?.filter(l => l.length >= 4) ?? []).length > 0
-            ? savedLangs!.filter(l => l.length >= 4)
-            : autoLang ? [autoLang] : []
+        const extraLangs = (savedLangs || []).filter(l => l.length >= 4 && l !== autoLang)
+        const langs = autoLang ? [autoLang, ...extraLangs] : extraLangs
         return {
           result: r,
           status: statusMap[r.word.id]?.status ?? 'pending',
@@ -279,7 +276,8 @@ export default function ReviewPage() {
   }
 
   // Derived data
-  const allLangs = [...new Set(cards.flatMap(c => c.langs).filter(Boolean))].sort()
+  const cardLangs = [...new Set(cards.flatMap(c => c.langs).filter(Boolean))]
+  const allLangs = [...new Set([...PRESET_LANGS, ...cardLangs])]
 
   const langFilteredCards: { card: CardState; idx: number }[] =
     selectedLang === 'all'
