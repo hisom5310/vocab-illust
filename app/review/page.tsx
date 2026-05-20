@@ -87,28 +87,21 @@ export default function ReviewPage() {
       const statusMap: Record<string, { status: Status; comment: string; isNew?: boolean; langs?: string[] }> =
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => {
-        // Migrate old format: en=English, ko=Korean → swap so en=학습어, ko=모국어
-        const enLang = detectLang(r.word.en)
-        const koLang = detectLang(r.word.ko)
-        const word = (enLang === 'EN' && koLang === 'KO')
-          ? { ...r.word, en: r.word.ko, ko: r.word.en }
-          : r.word
-        const result = word !== r.word ? { ...r, word } : r
-
-        const savedLangs = statusMap[word.id]?.langs
-        const autoLang = detectCourseTag(word.en, word.ko)
-        const normalizeLang = (l: string) => l === 'ENKO' ? 'KOEN' : l
+        const savedLangs = statusMap[r.word.id]?.langs
+        // r.lang (set by home page lang input) is most reliable → use if 4-char course tag
+        const sourceLang = r.lang && r.lang.length >= 4 ? r.lang : null
+        const autoLang = detectCourseTag(r.word.en, r.word.ko)
         const hasValidLangs = savedLangs && savedLangs.length > 0 && savedLangs.every(l => l.length >= 4)
         const langs = hasValidLangs
-          ? savedLangs!.map(normalizeLang)
-          : autoLang ? [normalizeLang(autoLang)] : []
+          ? savedLangs!
+          : sourceLang ? [sourceLang] : autoLang ? [autoLang] : []
         return {
-          result,
-          status: statusMap[word.id]?.status ?? 'pending',
-          comment: statusMap[word.id]?.comment ?? '',
+          result: r,
+          status: statusMap[r.word.id]?.status ?? 'pending',
+          comment: statusMap[r.word.id]?.comment ?? '',
           regenerating: false,
           newImage: null,
-          isNew: statusMap[word.id]?.isNew ?? false,
+          isNew: statusMap[r.word.id]?.isNew ?? false,
           langs,
         }
       }))
@@ -227,8 +220,7 @@ export default function ReviewPage() {
     const currentCards = cards
 
     // Auto-detect lang from words if addLang is empty
-    const raw = detectCourseTag(addWords[0]?.en || '', addWords[0]?.ko || '')
-    const detectedLang = raw === 'ENKO' ? 'KOEN' : raw
+    const detectedLang = detectCourseTag(addWords[0]?.en || '', addWords[0]?.ko || '')
     const lang = (addLang.trim().toUpperCase()) || detectedLang
 
     const duplicateIndices: number[] = []
