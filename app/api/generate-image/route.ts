@@ -21,6 +21,26 @@ const STYLE_BASE = `STRICT STYLE RULES (never break these):
 - Object fills the canvas 55–70%. Even white space on all sides.
 - Silhouette alone must convey the word — readable in grayscale.`
 
+// Shared character anatomy spec — used in both B and C prompts
+const CHAR_SPEC = `Character anatomy (must match exactly — this is the design system):
+  Face: large smooth oval, width ≈ height, extremely soft rounded edges
+  Eyebrows: two small thick filled dark arcs, placed high on forehead
+  Eyes: small filled dark ovals or downward arcs — no iris/white detail
+  Nose: absent, or a single tiny minimal dot
+  Mouth: small arc whose direction expresses emotion (up=smile, flat=neutral, down=sad, wavy=distressed, open=surprised)
+  Hair: flat filled dark gray (#555555) silhouette, zero texture or detail
+  Neck: short, slightly narrower than face, same skin fill
+  Body: very wide rounded shoulders, extremely puffy soft curves, simple silhouette
+  Hands: round blob shapes — absolutely NO individual fingers or finger lines
+  Skin tone: choose freely any race/ethnicity — Skin A (#E2B6AA), Skin B (#F6D9D0), medium brown, dark brown — vary across illustrations`
+
+const CHAR_STYLE_PREFIX = `STYLE REFERENCE: The attached image defines the character art style to replicate.
+DO NOT copy its content — create an entirely new illustration for the word below.
+Preserve from reference: face proportions, flat-fill rendering, minimal facial features (arcs only), body proportions, soft rounded silhouettes.
+Change freely: skin tone (any race/ethnicity), hair, outfit, pose, props, expression.
+
+`
+
 const TYPE_PROMPTS: Record<string, string> = {
   A: `${STYLE_BASE}
 
@@ -34,14 +54,17 @@ Choose the most instantly recognizable form of "{WORD}". Simplify to essential s
   B: `${STYLE_BASE}
 
 TYPE B — Character avatar for vocabulary flashcard. Word: "{WORD}" ({KO}).
-Composition: Half-body portrait, centered. Character faces slightly toward viewer.
-Character rules: rounded oval face (width:height ≈ 1:1.15), short thick neck, simple hair as flat filled shape in gray #555555. Eyes as small arcs or ovals. No finger details — hands as simple rounded rectangles. Skin tone: #E2B6AA (face, neck, hands). Outfit: simple rounded-neck top in a single palette color matching the profession's identity.
-Props rule: Include 1–2 profession-specific props or symbols that instantly identify "{WORD}" — these are required, not optional. Place props in hands or near the character (e.g., doctor→stethoscope, chef→toque+ladle, teacher→pointer+book, police→badge, firefighter→helmet). Do NOT add generic sparkles or unrelated decorations.`,
+Composition: Half-body portrait, centered. Character faces toward viewer.
+${CHAR_SPEC}
+Outfit: simple rounded-neck top in a single palette color that matches the profession's identity.
+Props (required): Include 1–2 profession-specific items that instantly identify "{WORD}". Place in hands or beside the character (e.g., doctor→stethoscope, chef→toque+ladle, teacher→book+pointer, police→badge, firefighter→helmet). No generic decorations.`,
 
   C: `${STYLE_BASE}
 
 TYPE C — Action/emotion scene for vocabulary flashcard. Word: "{WORD}" ({KO}).
-Composition: 1–2 simplified human figures clearly performing the action "{WORD}". Figures placed at bottom–center; symbolic elements (speech bubbles, arrows, icons) above. Figures shown as silhouettes + pose — minimal face detail. Use symbolic props to reinforce the action concept.`,
+Composition: 1–2 human figures clearly performing or expressing "{WORD}". Place at center/bottom; symbolic elements (speech bubbles, arrows, emotion marks) above or around.
+${CHAR_SPEC}
+Expression clarity: adjust mouth arc direction and add supporting marks (sweat drops=tired/hot, stars=dizzy, hearts=love, exclamation=surprise) as simple filled shapes. Body pose + expression must together communicate "{WORD}" without any text.`,
 
   D: `${STYLE_BASE}
 
@@ -51,7 +74,7 @@ Composition: 3–5 related nature elements freely scattered across the canvas. N
 
 export async function POST(request: Request) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  const { word, type = 'A', feedback, referenceImage } = await request.json()
+  const { word, type = 'A', feedback, referenceImage, characterRef } = await request.json()
 
   if (!word?.en || !word?.ko) {
     return Response.json({ error: '단어 정보가 없습니다' }, { status: 400 })
@@ -69,6 +92,7 @@ export async function POST(request: Request) {
   try {
     let b64: string | null | undefined
 
+    // User-supplied reference takes priority (regeneration with reference)
     if (referenceImage) {
       const b64data = (referenceImage as string).replace(/^data:image\/\w+;base64,/, '')
       const buffer = Buffer.from(b64data, 'base64')
@@ -77,6 +101,20 @@ export async function POST(request: Request) {
         model: 'gpt-image-1',
         image: file,
         prompt,
+        n: 1,
+        size: '1024x1024',
+        quality: 'medium',
+      })
+      b64 = response.data?.[0]?.b64_json
+    } else if (characterRef) {
+      // Auto character style reference for Type B/C
+      const b64data = (characterRef as string).replace(/^data:image\/\w+;base64,/, '')
+      const buffer = Buffer.from(b64data, 'base64')
+      const file = new File([buffer], 'char-ref.png', { type: 'image/png' })
+      const response = await openai.images.edit({
+        model: 'gpt-image-1',
+        image: file,
+        prompt: CHAR_STYLE_PREFIX + prompt,
         n: 1,
         size: '1024x1024',
         quality: 'medium',
