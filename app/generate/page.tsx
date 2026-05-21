@@ -1,27 +1,60 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useRef, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { idbSet, idbGet } from '../lib/storage'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
 type Result = { word: Word; image: string | null; error: string | null; lang?: string }
 
-export default function GeneratePage() {
+function GenerateContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [words, setWords] = useState<Word[]>([])
   const [results, setResults] = useState<Result[]>([])
   const [current, setCurrent] = useState(-1)
   const [done, setDone] = useState(false)
+  const [courseLabel, setCourseLabel] = useState('')
   const started = useRef(false)
 
   useEffect(() => {
+    const queueParam = searchParams.get('queue')
+
+    if (queueParam) {
+      // Claude API route path: /generate?queue=BASE64
+      try {
+        const decoded = JSON.parse(atob(queueParam)) as {
+          words: Word[]
+          lang: string
+          course: string
+        }
+        const { words: w, lang, course } = decoded
+        if (!w?.length) { router.push('/'); return }
+        if (course) setCourseLabel(course)
+        setWords(w)
+        setResults(w.map(word => ({ word, image: null, error: null, lang })))
+        idbSet('vocab-words', w)
+        idbSet('vocab-lang', lang)
+        idbSet('vocab-course', course)
+        if (!started.current) {
+          started.current = true
+          generateAll(w, lang)
+        }
+      } catch {
+        router.push('/')
+      }
+      return
+    }
+
+    // Normal flow: read from IDB
     Promise.all([
       idbGet<Word[]>('vocab-words'),
       idbGet<string>('vocab-lang'),
-    ]).then(([w, l]) => {
+      idbGet<string>('vocab-course'),
+    ]).then(([w, l, c]) => {
       if (!w) { router.push('/'); return }
       const lang = l || ''
+      if (c) setCourseLabel(c)
       setWords(w)
       setResults(w.map(word => ({ word, image: null, error: null, lang })))
       if (!started.current) {
@@ -29,7 +62,8 @@ export default function GeneratePage() {
         generateAll(w, lang)
       }
     })
-  }, [router])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const generateAll = async (wordList: Word[], lang: string) => {
     const res: Result[] = wordList.map(w => ({ word: w, image: null, error: null, lang }))
@@ -51,7 +85,7 @@ export default function GeneratePage() {
     setCurrent(-1)
     setDone(true)
     await idbSet('vocab-results', res)
-    await idbSet('vocab-card-statuses', [])  // clear stale statuses from previous batch
+    await idbSet('vocab-card-statuses', [])
     router.push('/review')
   }
 
@@ -66,6 +100,7 @@ export default function GeneratePage() {
             ← 단어 목록으로
           </button>
           <h1 className="text-2xl font-bold text-gray-900">일러스트 생성 중</h1>
+          {courseLabel && <p className="mt-1 text-teal-600 font-medium text-sm">{courseLabel}</p>}
           {!done && current >= 0 && (
             <p className="mt-1 text-gray-500 text-sm">
               {current + 1} / {words.length} 생성 중... ({words[current]?.en})
@@ -122,5 +157,13 @@ export default function GeneratePage() {
 
       </div>
     </main>
+  )
+}
+
+export default function GeneratePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-400">로딩 중...</div>}>
+      <GenerateContent />
+    </Suspense>
   )
 }
