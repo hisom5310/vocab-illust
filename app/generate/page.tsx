@@ -84,8 +84,28 @@ function GenerateContent() {
     }
     setCurrent(-1)
     setDone(true)
-    await idbSet('vocab-results', res)
-    await idbSet('vocab-card-statuses', [])
+
+    // Merge with existing results (preserve previously generated images)
+    const existingResults = await idbGet<Result[]>('vocab-results') ?? []
+    const existingStatuses = await idbGet<{ id: string; status: string; comment: string }[]>('vocab-card-statuses') ?? []
+
+    const mergedResults = [...existingResults]
+    const mergedStatuses = [...existingStatuses]
+
+    for (const r of res) {
+      const idx = mergedResults.findIndex(e => e.word.id === r.word.id)
+      if (idx >= 0) {
+        mergedResults[idx] = r
+      } else {
+        mergedResults.push(r)
+        if (!mergedStatuses.find(s => s.id === r.word.id)) {
+          mergedStatuses.push({ id: r.word.id, status: 'pending', comment: '' })
+        }
+      }
+    }
+
+    await idbSet('vocab-results', mergedResults)
+    await idbSet('vocab-card-statuses', mergedStatuses)
     router.push('/review')
   }
 
