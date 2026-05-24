@@ -63,6 +63,14 @@ function parseLines(text: string, startIdx: number): Word[] {
     .filter(w => w.en && w.ko)
 }
 
+type SessionMeta = { id: string; createdAt: string; lang: string; course: string; count: number }
+type ServerResult = { word: Word; imageUrl: string | null; error: string | null; lang?: string }
+type ServerSession = {
+  id: string; createdAt: string; lang: string; course: string
+  results: ServerResult[]
+  statuses: { id: string; status: Status; comment: string; isNew?: boolean; langs?: string[] }[]
+}
+
 export default function ReviewPage() {
   const router = useRouter()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -79,13 +87,63 @@ export default function ReviewPage() {
   const [addLang, setAddLang] = useState('')
   const [addWords, setAddWords] = useState<Word[]>([])
   const [addGenerating, setAddGenerating] = useState(false)
+  const [recovering, setRecovering] = useState(false)
+  const [sessions, setSessions] = useState<SessionMeta[] | null>(null)
+  const [loadingSession, setLoadingSession] = useState(false)
+
+  const loadSessionIntoState = (session: ServerSession) => {
+    const statusMap = Object.fromEntries((session.statuses ?? []).map(s => [s.id, s]))
+    setCards(session.results.map(r => {
+      const saved = statusMap[r.word.id]
+      const image = r.imageUrl ?? null
+      const autoLang = detectCourseTag(r.word.en, r.word.ko)
+      const primaryLang = (r.lang && r.lang.length >= 4 ? r.lang : null)
+        || (saved?.langs || []).find(l => l.length >= 4)
+        || autoLang
+      return {
+        result: { word: r.word, image, error: r.error, lang: r.lang },
+        status: saved?.status ?? 'pending',
+        comment: saved?.comment ?? '',
+        regenerating: false,
+        newImage: null,
+        isNew: saved?.isNew ?? false,
+        langs: primaryLang ? [primaryLang] : [],
+      }
+    }))
+    setRecovering(false)
+  }
+
+  const restoreSession = async (sessionId: string) => {
+    setLoadingSession(true)
+    try {
+      const res = await fetch(`/api/storage/sessions/${sessionId}`)
+      const session: ServerSession = await res.json()
+      // Persist to IndexedDB so it survives page refreshes
+      const results: Result[] = session.results.map(r => ({
+        word: r.word, image: r.imageUrl, error: r.error, lang: r.lang,
+      }))
+      await idbSet('vocab-results', results)
+      await idbSet('vocab-card-statuses', session.statuses ?? [])
+      loadSessionIntoState(session)
+    } catch {
+      alert('세션 불러오기 실패')
+    }
+    setLoadingSession(false)
+  }
 
   useEffect(() => {
     Promise.all([
       idbGet<Result[]>('vocab-results'),
       idbGet<{ id: string; status: Status; comment: string; isNew?: boolean; langs?: string[] }[]>('vocab-card-statuses'),
     ]).then(([results, statuses]) => {
-      if (!results) { router.push('/'); return }
+      if (!results) {
+        setRecovering(true)
+        fetch('/api/storage/sessions')
+          .then(r => r.json())
+          .then(({ sessions: s }) => setSessions(s ?? []))
+          .catch(() => setSessions([]))
+        return
+      }
       const statusMap: Record<string, { status: Status; comment: string; isNew?: boolean; langs?: string[] }> =
         statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
       setCards(results.map(r => {
@@ -308,6 +366,54 @@ export default function ReviewPage() {
   const addWordNew = addWords.filter(w =>
     !cards.some(c => c.result.word.en.toLowerCase() === w.en.toLowerCase())
   )
+
+  if (recovering) {
+    return (
+      <main className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="max-w-lg w-full mx-4">
+          <h2 className="text-xl font-bold text-gray-900 mb-1">저장된 데이터가 없어요</h2>
+          <p className="text-sm text-gray-500 mb-6">서버에 백업된 세션을 불러올 수 있어요.</p>
+
+          {sessions === null ? (
+            <p className="text-sm text-gray-400">세션 목록 불러오는 중...</p>
+          ) : sessions.length === 0 ? (
+            <div className="text-center py-8 text-gray-400 text-sm">
+              <p>서버에 저장된 세션이 없어요.</p>
+              <button onClick={() => router.push('/')} className="mt-4 text-teal-600 underline text-sm">
+                새로 생성하기
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {sessions.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => restoreSession(s.id)}
+                  disabled={loadingSession}
+                  className="w-full text-left px-4 py-3 bg-white border border-gray-200 rounded-xl hover:border-teal-400 hover:bg-teal-50 transition-colors disabled:opacity-50"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm font-medium text-gray-800">
+                        {s.course || s.lang || '알 수 없는 코스'}
+                      </span>
+                      <span className="ml-2 text-xs text-gray-400">{s.count}개</span>
+                    </div>
+                    <span className="text-xs text-gray-400">
+                      {new Date(s.createdAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </button>
+              ))}
+              <button onClick={() => router.push('/')} className="mt-2 text-sm text-gray-400 underline w-full text-center pt-2">
+                새로 생성하기
+              </button>
+            </div>
+          )}
+        </div>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-gray-50">

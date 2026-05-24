@@ -135,6 +135,26 @@ function GenerateContent() {
 
     await idbSet('vocab-results', mergedResults)
     await idbSet('vocab-card-statuses', mergedStatuses)
+
+    // Background save to server (non-blocking)
+    const [savedLang, savedCourse] = await Promise.all([
+      idbGet<string>('vocab-lang'),
+      idbGet<string>('vocab-course'),
+    ])
+    fetch('/api/storage/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        results: mergedResults,
+        statuses: mergedStatuses,
+        lang: savedLang ?? '',
+        course: savedCourse ?? '',
+      }),
+    })
+      .then(r => r.json())
+      .then(({ sessionId }) => { if (sessionId) localStorage.setItem('vocab-last-session', sessionId) })
+      .catch(() => {})
+
     router.push('/review')
   }
 
