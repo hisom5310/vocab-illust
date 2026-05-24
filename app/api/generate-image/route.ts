@@ -1,4 +1,6 @@
 import OpenAI from 'openai'
+import fs from 'fs'
+import path from 'path'
 
 const STYLE_BASE = `STRICT STYLE RULES (never break these):
 - Fill (solid color) only. Absolutely NO strokes, NO outlines, NO gradients, NO drop shadows, NO effects.
@@ -34,17 +36,17 @@ const CHAR_SPEC = `Character anatomy (must match exactly — this is the design 
   Hands: round blob shapes — absolutely NO individual fingers or finger lines
   Skin tone: choose freely any race/ethnicity — Skin A (#E2B6AA), Skin B (#F6D9D0), medium brown, dark brown — vary across illustrations`
 
-const CHAR_STYLE_PREFIX = `STYLE REFERENCE: The attached image defines the character art style to replicate.
+const STYLE_REF_PREFIX = `STYLE REFERENCE: The attached image shows the exact illustration style to replicate.
 DO NOT copy its content — create an entirely new illustration for the word below.
-Preserve from reference: face proportions, flat-fill rendering, minimal facial features (arcs only), body proportions, soft rounded silhouettes.
-Change freely: skin tone (any race/ethnicity), hair, outfit, pose, props, expression.
+Preserve from reference: flat solid-fill rendering, limited color palette, soft rounded shapes, minimal detail, white background, overall graphic treatment.
+Change everything else: subject, composition, colors, and all content.
 
 `
 
 const TYPE_PROMPTS: Record<string, string> = {
   A: `${STYLE_BASE}
 
-TYPE A — Simple icon illustration for vocabulary flashcard. Word: "{WORD}" ({KO}).
+TYPE A — Simple icon illustration for vocabulary flashcard. Word: "{WORD}".
 Composition: One clear representative object centered, filling 55–70% of canvas.
 Decorative elements rule — judge by word type:
   • Add 2–3 small semantic elements ONLY if they reinforce the word's identity. Place at diagonal positions, not grid-aligned. Examples: party→confetti+stars, music→notes, fire→sparks, rain→droplets, love→hearts.
@@ -53,7 +55,7 @@ Choose the most instantly recognizable form of "{WORD}". Simplify to essential s
 
   B: `${STYLE_BASE}
 
-TYPE B — Character avatar for vocabulary flashcard. Word: "{WORD}" ({KO}).
+TYPE B — Character avatar for vocabulary flashcard. Word: "{WORD}".
 Composition: Half-body portrait, centered. Character faces toward viewer.
 ${CHAR_SPEC}
 Outfit: simple rounded-neck top in a single palette color that matches the profession's identity.
@@ -61,20 +63,27 @@ Props (required): Include 1–2 profession-specific items that instantly identif
 
   C: `${STYLE_BASE}
 
-TYPE C — Action/emotion scene for vocabulary flashcard. Word: "{WORD}" ({KO}).
+TYPE C — Action/emotion scene for vocabulary flashcard. Word: "{WORD}".
 Composition: 1–2 human figures clearly performing or expressing "{WORD}". Place at center/bottom; symbolic elements (speech bubbles, arrows, emotion marks) above or around.
 ${CHAR_SPEC}
 Expression clarity: adjust mouth arc direction and add supporting marks (sweat drops=tired/hot, stars=dizzy, hearts=love, exclamation=surprise) as simple filled shapes. Body pose + expression must together communicate "{WORD}" without any text.`,
 
   D: `${STYLE_BASE}
 
-TYPE D — Nature/season illustration for vocabulary flashcard. Word: "{WORD}" ({KO}).
+TYPE D — Nature/season illustration for vocabulary flashcard. Word: "{WORD}".
 Composition: 3–5 related nature elements freely scattered across the canvas. No grid alignment — use diagonal/triangular layout. Elements vary in size (largest 2× smallest). Some overlap for depth. Rotate some elements for variety. Choose colors that naturally represent "{WORD}" (e.g., spring→pink+green, ocean→blue+teal).`,
+}
+
+function loadStyleRef(type: string): File {
+  const refName = `type-${type.toLowerCase()}.png`
+  const refPath = path.join(process.cwd(), 'public', 'reference', 'style_refs', refName)
+  const buf = fs.readFileSync(refPath)
+  return new File([buf], refName, { type: 'image/png' })
 }
 
 export async function POST(request: Request) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  const { word, type = 'A', feedback, referenceImage, characterRef } = await request.json()
+  const { word, type = 'A', feedback, referenceImage } = await request.json()
 
   if (!word?.en || !word?.ko) {
     return Response.json({ error: '단어 정보가 없습니다' }, { status: 400 })
@@ -83,7 +92,6 @@ export async function POST(request: Request) {
   const basePrompt = TYPE_PROMPTS[type] || TYPE_PROMPTS.A
   let prompt = basePrompt
     .replace(/\{WORD\}/g, word.en)
-    .replace(/\{KO\}/g, word.ko)
 
   if (feedback) {
     prompt += `\n\nImportant corrections from previous attempt: ${feedback}`
@@ -92,42 +100,30 @@ export async function POST(request: Request) {
   try {
     let b64: string | null | undefined
 
-    // User-supplied reference takes priority (regeneration with reference)
     if (referenceImage) {
+      // User-supplied reference takes priority (regeneration with specific reference)
       const b64data = (referenceImage as string).replace(/^data:image\/\w+;base64,/, '')
       const buffer = Buffer.from(b64data, 'base64')
       const file = new File([buffer], 'reference.png', { type: 'image/png' })
       const response = await openai.images.edit({
         model: 'gpt-image-1',
         image: file,
-        prompt,
-        n: 1,
-        size: '1024x1024',
-        quality: 'medium',
-      })
-      b64 = response.data?.[0]?.b64_json
-    } else if (characterRef) {
-      // Auto character style reference for Type B/C
-      const b64data = (characterRef as string).replace(/^data:image\/\w+;base64,/, '')
-      const buffer = Buffer.from(b64data, 'base64')
-      const file = new File([buffer], 'char-ref.png', { type: 'image/png' })
-      const response = await openai.images.edit({
-        model: 'gpt-image-1',
-        image: file,
-        prompt: CHAR_STYLE_PREFIX + prompt,
+        prompt: STYLE_REF_PREFIX + prompt,
         n: 1,
         size: '1024x1024',
         quality: 'medium',
       })
       b64 = response.data?.[0]?.b64_json
     } else {
-      const response = await openai.images.generate({
+      // Always use images.edit() with a type-matched style reference
+      const styleRef = loadStyleRef(type)
+      const response = await openai.images.edit({
         model: 'gpt-image-1',
-        prompt,
+        image: styleRef,
+        prompt: STYLE_REF_PREFIX + prompt,
         n: 1,
         size: '1024x1024',
         quality: 'medium',
-        background: 'transparent',
       })
       b64 = response.data?.[0]?.b64_json
     }

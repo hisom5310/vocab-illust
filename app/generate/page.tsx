@@ -65,44 +65,16 @@ function GenerateContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const charRefs = [
-    '/reference/character/char-light.png',
-    '/reference/character/char-medium.png',
-    '/reference/character/char-dark.png',
-  ]
-
-  const toBase64 = async (url: string): Promise<string> => {
-    const res = await fetch(url)
-    const blob = await res.blob()
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as string)
-      reader.onerror = reject
-      reader.readAsDataURL(blob)
-    })
-  }
-
   const generateAll = async (wordList: Word[], lang: string) => {
     const res: Result[] = wordList.map(w => ({ word: w, image: null, error: null, lang }))
     for (let i = 0; i < wordList.length; i++) {
       setCurrent(i)
       const word = wordList[i]
       try {
-        // For Type B/C, load a character style reference (cycle through 3 for race diversity)
-        let characterRef: string | undefined
-        if (word.type === 'B' || word.type === 'C') {
-          try {
-            const refUrl = charRefs[i % charRefs.length]
-            characterRef = await toBase64(refUrl)
-          } catch {
-            // Proceed without reference if fetch fails
-          }
-        }
-
         const r = await fetch('/api/generate-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ word, type: word.type, characterRef }),
+          body: JSON.stringify({ word, type: word.type }),
         })
         const data = await r.json()
         res[i] = { word, image: data.image || null, error: data.error || null, lang }
