@@ -11,6 +11,7 @@
   "dependencies": {
     "@google/genai": "^2.3.0",
     "@vercel/blob": "^2.4.0",
+    "imagetracerjs": "^1.2.6",
     "next": "16.2.6",
     "openai": "^6.37.0",
     "react": "19.2.4",

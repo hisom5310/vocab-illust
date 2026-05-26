@@ -88,6 +88,7 @@ export default function ReviewPage() {
   const [addWords, setAddWords] = useState<Word[]>([])
   const [addGenerating, setAddGenerating] = useState(false)
   const [recovering, setRecovering] = useState(false)
+  const [vectorizing, setVectorizing] = useState<Set<number>>(new Set())
   const [sessions, setSessions] = useState<SessionMeta[] | null>(null)
   const [loadingSession, setLoadingSession] = useState(false)
 
@@ -236,6 +237,42 @@ export default function ReviewPage() {
     a.href = img
     a.download = `${card.result.word.id}_${card.result.word.en.replace(/\s+/g, '_')}.png`
     a.click()
+  }
+
+  const downloadSVG = async (card: CardState, idx: number) => {
+    const img = card.newImage || card.result.image
+    if (!img) return
+    setVectorizing(prev => new Set(prev).add(idx))
+    try {
+      const image = new Image()
+      image.src = img
+      await new Promise<void>(resolve => { image.onload = () => resolve() })
+      const canvas = document.createElement('canvas')
+      canvas.width = image.width
+      canvas.height = image.height
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(image, 0, 0)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const ImageTracer = (await import('imagetracerjs')).default
+      const svgStr = ImageTracer.imagedataToSVG(imageData, {
+        numberofcolors: 16,
+        pathomit: 4,
+        blurradius: 0,
+        ltres: 1,
+        qtres: 1,
+        roundcoords: 2,
+        viewbox: true,
+        desc: false,
+      })
+      const blob = new Blob([svgStr], { type: 'image/svg+xml' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${card.result.word.id}_${card.result.word.en.replace(/\s+/g, '_')}.svg`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } finally {
+      setVectorizing(prev => { const s = new Set(prev); s.delete(idx); return s })
+    }
   }
 
   const openLightbox = (idx: number) => { setLightbox(idx); setLightboxComment(false) }
@@ -684,10 +721,20 @@ export default function ReviewPage() {
                       <button
                         onClick={() => downloadSingle(card)}
                         disabled={!(card.newImage || card.result.image)}
-                        title="이미지 저장"
+                        title="PNG 저장"
                         className="w-7 py-1.5 bg-gray-100 text-gray-500 rounded-md text-xs font-medium hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
                       >
                         ↓
+                      </button>
+                      <button
+                        onClick={() => downloadSVG(card, idx)}
+                        disabled={!(card.newImage || card.result.image) || vectorizing.has(idx)}
+                        title="SVG 변환 후 저장"
+                        className="w-9 py-1.5 bg-gray-100 text-gray-500 rounded-md text-xs font-medium hover:bg-purple-50 hover:text-purple-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+                      >
+                        {vectorizing.has(idx) ? (
+                          <span className="inline-block w-3 h-3 border border-purple-400 border-t-transparent rounded-full animate-spin" />
+                        ) : 'SVG'}
                       </button>
                       <button
                         onClick={() => deleteCard(idx)}
