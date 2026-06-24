@@ -23,7 +23,8 @@ function GenerateContent() {
     if (queueParam) {
       // Claude API route path: /generate?queue=BASE64
       try {
-        const decoded = JSON.parse(atob(queueParam)) as {
+        const bytes = Uint8Array.from(atob(queueParam), c => c.charCodeAt(0))
+        const decoded = JSON.parse(new TextDecoder().decode(bytes)) as {
           words: Word[]
           lang: string
           course: string
