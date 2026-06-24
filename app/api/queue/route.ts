@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     })).filter(w => w.en && w.ko)
 
     const payload = { words: wordList, lang, course }
-    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64')
+    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
     const origin = new URL(req.url).origin
     const url = `${origin}/generate?queue=${encoded}`
 
