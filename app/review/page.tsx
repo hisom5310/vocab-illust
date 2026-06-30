@@ -89,6 +89,7 @@ export default function ReviewPage() {
   const [addGenerating, setAddGenerating] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [vectorizing, setVectorizing] = useState<Set<number>>(new Set())
+  const [pendingSaved, setPendingSaved] = useState(0)
   const [sessions, setSessions] = useState<SessionMeta[] | null>(null)
   const [loadingSession, setLoadingSession] = useState(false)
 
@@ -243,7 +244,20 @@ export default function ReviewPage() {
     const img = card.newImage || card.result.image
     if (!img) return
     setVectorizing(prev => new Set(prev).add(idx))
+    const filename = `${card.result.word.id}_${card.result.word.en.replace(/\s+/g, '_')}.png`
     try {
+      if (window.location.hostname === 'localhost') {
+        const res = await fetch('/api/local/save-pending', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: img, filename }),
+        })
+        if (res.ok) {
+          setPendingSaved(n => n + 1)
+          return
+        }
+      }
+      // 프로덕션 폴백: imagetracerjs
       const image = new Image()
       image.src = img
       await new Promise<void>(resolve => { image.onload = () => resolve() })
@@ -255,14 +269,8 @@ export default function ReviewPage() {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
       const ImageTracer = (await import('imagetracerjs')).default
       const svgStr = ImageTracer.imagedataToSVG(imageData, {
-        numberofcolors: 16,
-        pathomit: 4,
-        blurradius: 0,
-        ltres: 1,
-        qtres: 1,
-        roundcoords: 2,
-        viewbox: true,
-        desc: false,
+        numberofcolors: 16, pathomit: 4, blurradius: 0,
+        ltres: 1, qtres: 1, roundcoords: 2, viewbox: true, desc: false,
       })
       const blob = new Blob([svgStr], { type: 'image/svg+xml' })
       const a = document.createElement('a')
@@ -455,6 +463,14 @@ export default function ReviewPage() {
   return (
     <main className="min-h-screen bg-gray-50">
       <div className="max-w-5xl mx-auto px-6">
+
+        {/* pending-svg 저장 배너 */}
+        {pendingSaved > 0 && (
+          <div className="mt-6 flex items-center justify-between bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 text-sm text-teal-700">
+            <span>📁 {pendingSaved}개 PNG가 <code className="bg-teal-100 px-1 rounded">pending-svg/</code>에 저장됨 — Claude에게 SVG 변환을 요청하세요</span>
+            <button onClick={() => setPendingSaved(0)} className="text-teal-400 hover:text-teal-600 ml-4">✕</button>
+          </div>
+        )}
 
         {/* ① Header */}
         <div className="pt-10 pb-6 flex items-center justify-between">

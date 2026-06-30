@@ -4,7 +4,7 @@ import path from 'path'
 
 const STYLE_BASE = `STRICT STYLE RULES (never break these):
 - Fill (solid color) only. Absolutely NO strokes, NO outlines, NO gradients, NO drop shadows, NO effects.
-- White background #FFFFFF only. No patterns.
+- Transparent background. No background color, no patterns.
 - All corners must be rounded/soft — no sharp edges.
 - Colors ONLY from this palette:
   Red: #FCDBD9 #FFB1AD #FF817A #FC5951 #E0433A #B84640 #7A4340
@@ -115,15 +115,16 @@ export async function POST(request: Request) {
       })
       b64 = response.data?.[0]?.b64_json
     } else {
-      // Always use images.edit() with a type-matched style reference
-      const styleRef = loadStyleRef(type)
-      const response = await openai.images.edit({
+      // images.generate() with transparent background
+      const response = await openai.images.generate({
         model: 'gpt-image-1',
-        image: styleRef,
-        prompt: STYLE_REF_PREFIX + prompt,
+        prompt,
         n: 1,
         size: '1024x1024',
         quality: 'medium',
+        // @ts-expect-error: gpt-image-1 supports background/output_format
+        background: 'transparent',
+        output_format: 'png',
       })
       b64 = response.data?.[0]?.b64_json
     }
