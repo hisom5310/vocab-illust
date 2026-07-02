@@ -92,6 +92,7 @@ export default function ReviewPage() {
   const [pendingSaved, setPendingSaved] = useState(0)
   const [sessions, setSessions] = useState<SessionMeta[] | null>(null)
   const [loadingSession, setLoadingSession] = useState(false)
+  const [selectedCards, setSelectedCards] = useState<Set<number>>(new Set())
 
   const loadSessionIntoState = (session: ServerSession) => {
     const statusMap = Object.fromEntries((session.statuses ?? []).map(s => [s.id, s]))
@@ -403,6 +404,15 @@ export default function ReviewPage() {
     langFilteredCards.filter(({ card }) => card.status === 'approved').forEach(({ card }) => downloadSingle(card))
   }
 
+  const toggleSelect = (idx: number) => {
+    setSelectedCards(prev => { const s = new Set(prev); s.has(idx) ? s.delete(idx) : s.add(idx); return s })
+  }
+  const clearSelection = () => setSelectedCards(new Set())
+  const selectAll = () => setSelectedCards(new Set(filteredCards.map(({ idx }) => idx)))
+  const downloadSelected = () => {
+    filteredCards.filter(({ idx }) => selectedCards.has(idx)).forEach(({ card }) => downloadSingle(card))
+  }
+
   const lbCard = lightbox !== null ? cards[lightbox] : null
 
   const addWordDups = addWords.filter(w =>
@@ -484,6 +494,14 @@ export default function ReviewPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            {selectedCards.size > 0 && (
+              <button
+                onClick={downloadSelected}
+                className="px-5 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 transition-colors"
+              >
+                선택 다운로드 ({selectedCards.size})
+              </button>
+            )}
             <button
               onClick={() => {
                 setAddPanel(v => !v)
@@ -496,9 +514,9 @@ export default function ReviewPage() {
             <button
               onClick={downloadApproved}
               disabled={approvedCount === 0}
-              className="px-5 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              다운로드 ({approvedCount})
+              승인 다운로드 ({approvedCount})
             </button>
           </div>
         </div>
@@ -645,25 +663,38 @@ export default function ReviewPage() {
             </div>
           )}
 
-          {/* ④ Status filter tabs */}
-          <div className="flex gap-1 mb-5 bg-gray-100 p-1 rounded-xl w-fit">
-            {([
-              ['all', '전체', langFilteredCards.length],
-              ['approved', '승인됨', approvedCount],
-              ['pending', '승인전', langFilteredCards.filter(({ card }) => card.status !== 'approved').length],
-              ['regenerated', '재생성', regeneratedCount],
-            ] as [FilterType, string, number][]).map(([key, label, count]) => (
+          {/* ④ Status filter tabs + selection controls */}
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+              {([
+                ['all', '전체', langFilteredCards.length],
+                ['approved', '승인됨', approvedCount],
+                ['pending', '승인전', langFilteredCards.filter(({ card }) => card.status !== 'approved').length],
+                ['regenerated', '재생성', regeneratedCount],
+              ] as [FilterType, string, number][]).map(([key, label, count]) => (
+                <button
+                  key={key}
+                  onClick={() => setFilter(key)}
+                  className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    filter === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {label}
+                  {count > 0 && <span className="ml-1.5 text-xs tabular-nums text-gray-400">{count}</span>}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              {selectedCards.size > 0 && (
+                <span className="text-sm text-teal-600 font-medium">{selectedCards.size}개 선택됨</span>
+              )}
               <button
-                key={key}
-                onClick={() => setFilter(key)}
-                className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  filter === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
+                onClick={selectedCards.size > 0 ? clearSelection : selectAll}
+                className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
               >
-                {label}
-                {count > 0 && <span className="ml-1.5 text-xs tabular-nums text-gray-400">{count}</span>}
+                {selectedCards.size > 0 ? '선택 해제' : '전체 선택'}
               </button>
-            ))}
+            </div>
           </div>
 
           {/* ⑤ Cards grid */}
@@ -678,6 +709,17 @@ export default function ReviewPage() {
                     card.status === 'rejected' ? 'border-red-300' : 'border-gray-200'
                   }`}
                 >
+                  <div className="px-3 pt-2 pb-1 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedCards.has(idx)}
+                      onChange={() => toggleSelect(idx)}
+                      className="w-3.5 h-3.5 rounded accent-teal-500 cursor-pointer shrink-0"
+                    />
+                    {card.isNew && !card.regenerating && (
+                      <span className="text-xs bg-orange-400 text-white px-1.5 py-0.5 rounded-full font-semibold leading-none">NEW</span>
+                    )}
+                  </div>
                   <div
                     className="aspect-square bg-gray-50 relative cursor-pointer group"
                     onClick={() => img && openLightbox(idx)}
@@ -700,9 +742,6 @@ export default function ReviewPage() {
 
                     {card.status === 'approved' && (
                       <div className="absolute top-2 right-2 bg-teal-500 text-white text-xs px-2 py-0.5 rounded-full">승인</div>
-                    )}
-                    {card.isNew && !card.regenerating && (
-                      <div className="absolute top-2 left-2 bg-orange-400 text-white text-xs px-2 py-0.5 rounded-full font-semibold">NEW</div>
                     )}
                     {card.langs.length > 0 && (
                       <div className="absolute bottom-2 left-2 flex gap-1 flex-wrap">

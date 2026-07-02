@@ -24,21 +24,21 @@ const STYLE_BASE = `STRICT STYLE RULES (never break these):
 - Silhouette alone must convey the word — readable in grayscale.`
 
 // Shared character anatomy spec — used in both B and C prompts
-const CHAR_SPEC = `Character anatomy (must match exactly — this is the design system):
-  Face: large smooth oval, width ≈ height, extremely soft rounded edges
-  Eyebrows: two small thick filled dark arcs, placed high on forehead
-  Eyes: small filled dark ovals or downward arcs — no iris/white detail
-  Nose: absent, or a single tiny minimal dot
-  Mouth: small arc whose direction expresses emotion (up=smile, flat=neutral, down=sad, wavy=distressed, open=surprised)
-  Hair: flat filled dark gray (#555555) silhouette, zero texture or detail
-  Neck: short, slightly narrower than face, same skin fill
-  Body: very wide rounded shoulders, extremely puffy soft curves, simple silhouette
-  Hands: round blob shapes — absolutely NO individual fingers or finger lines
-  Skin tone: choose freely any race/ethnicity — Skin A (#E2B6AA), Skin B (#F6D9D0), medium brown, dark brown — vary across illustrations`
+const CHAR_SPEC = `CHARACTER DESIGN SYSTEM — replicate exactly, no exceptions:
+  PROPORTIONS: Head occupies ≈35% of canvas height, centered 15–30% from top. Body extends to canvas bottom. Half-body portrait only — no waist, no legs visible.
+  FACE: Large smooth oval, width ≈ height. Fill with skin tone: Skin A (#E2B6AA), Skin B (#F6D9D0), medium brown (#C0825A), or dark brown (#7A4A2A). Vary skin tone across illustrations. Extremely soft rounded edges — no hard corners anywhere.
+  HAIR: STRICTLY a flat filled #555555 silhouette. Simple smooth dome or rounded cap shape resting on top of the head oval. Zero texture, zero individual strands, zero highlights, zero internal lines whatsoever. One solid dark gray shape only.
+  EYEBROWS: Two tiny filled dark (#555555) arcs placed HIGH on the forehead (upper quarter of face oval). Each arc is very small — width ≈ 10% of face width. Symmetric placement.
+  EYES: Two tiny filled dark (#555555) dots or minimal downward-curved arcs. NO whites, NO iris, NO pupils, NO eyelashes, NO detail — just two tiny dark filled marks.
+  NOSE: Omit entirely — strongly preferred. If included at all: maximum one or two tiny 2px dark dots for nostrils only. No nose bridge, no nose shape.
+  MOUTH: A single small arc shape only. Upward = smile, horizontal = neutral, downward = sad, small open oval = surprise. Nothing else.
+  NECK: Short, slightly narrower than face oval, same skin fill as face.
+  BODY/TOP: Extremely wide soft shape — shoulder silhouette extends 70–80% of canvas width. Very puffy, rounded shoulder curves. Single solid palette color fill. MANDATORY: a small white curved shape (inner collar/undershirt) must be visible at the neckline between neck and top's color — this white collar detail is required on every character.
+  HANDS/ARMS: Absolutely NO individual fingers or finger lines. If arms or hands appear: render only as simple round blob shapes or rounded stumps. Preferred: do not show hands — arms terminate at canvas edge or behind body.`
 
 const STYLE_REF_PREFIX = `STYLE REFERENCE: The attached image shows the exact illustration style to replicate.
 DO NOT copy its content — create an entirely new illustration for the word below.
-Preserve from reference: flat solid-fill rendering, limited color palette, soft rounded shapes, minimal detail, white background, overall graphic treatment.
+Preserve from reference: flat solid-fill rendering, limited color palette, soft rounded shapes, minimal detail, overall graphic treatment.
 Change everything else: subject, composition, colors, and all content.
 
 `
@@ -58,15 +58,15 @@ Choose the most instantly recognizable form of "{WORD}". Simplify to essential s
 TYPE B — Character avatar for vocabulary flashcard. Word: "{WORD}".
 Composition: Half-body portrait, centered. Character faces toward viewer.
 ${CHAR_SPEC}
-Outfit: simple rounded-neck top in a single palette color that matches the profession's identity.
-Props (required): Include 1–2 profession-specific items that instantly identify "{WORD}". Place in hands or beside the character (e.g., doctor→stethoscope, chef→toque+ladle, teacher→book+pointer, police→badge, firefighter→helmet). No generic decorations.`,
+Outfit: The top must show the mandatory white inner collar. Use a single solid palette color for the top that visually fits the profession of "{WORD}".
+Props (required): Include 1–2 occupation-specific items that make "{WORD}" instantly recognizable — place them near the character or at center chest (avoid putting in hands, to prevent finger detail). Examples: doctor→stethoscope at chest; chef→white toque hat above head; teacher→open book in front; police→badge on chest; tie→simple dark shape at neckline center. All props must be simple flat solid shapes in palette colors.`,
 
   C: `${STYLE_BASE}
 
 TYPE C — Action/emotion scene for vocabulary flashcard. Word: "{WORD}".
-Composition: 1–2 human figures clearly performing or expressing "{WORD}". Place at center/bottom; symbolic elements (speech bubbles, arrows, emotion marks) above or around.
+Composition: 1–2 human figures clearly expressing or performing "{WORD}". Figures centered; symbolic elements placed above or beside them.
 ${CHAR_SPEC}
-Expression clarity: adjust mouth arc direction and add supporting marks (sweat drops=tired/hot, stars=dizzy, hearts=love, exclamation=surprise) as simple filled shapes. Body pose + expression must together communicate "{WORD}" without any text.`,
+Expression: Adjust the mouth arc direction for the emotion. Add 1–2 supporting marks as simple flat filled shapes — speech bubble = rounded rectangle with 3 short white lines inside to suggest text; hearts = simple filled heart shapes; sweat drops = small teardrop shapes; stars = simple filled star shapes; exclamation = "!" shape. All marks flat, filled, palette-colored. The character pose + expression + marks together must communicate "{WORD}" without any text.`,
 
   D: `${STYLE_BASE}
 
@@ -122,7 +122,6 @@ export async function POST(request: Request) {
         n: 1,
         size: '1024x1024',
         quality: 'medium',
-        // @ts-expect-error: gpt-image-1 supports background/output_format
         background: 'transparent',
         output_format: 'png',
       })
