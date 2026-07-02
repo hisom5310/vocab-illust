@@ -2,6 +2,8 @@ import OpenAI from 'openai'
 import fs from 'fs'
 import path from 'path'
 
+export const maxDuration = 60
+
 const STYLE_BASE = `STRICT STYLE RULES (never break these):
 - Fill (solid color) only. Absolutely NO strokes, NO outlines, NO gradients, NO drop shadows, NO effects.
 - Transparent background. No background color, no patterns.

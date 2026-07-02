@@ -224,10 +224,17 @@ export default function ReviewPage() {
         }),
       })
       const data = await r.json()
+      if (data.error) {
+        alert(`재생성 실패: ${data.error}`)
+        setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: false } : c))
+        return
+      }
       setCards(prev => prev.map((c, i) =>
         i === idx ? { ...c, regenerating: false, newImage: data.image || null, status: 'pending', isNew: true } : c
       ))
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '알 수 없는 오류'
+      alert(`재생성 실패: ${message}`)
       setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: false } : c))
     }
   }
