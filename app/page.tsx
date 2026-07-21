@@ -49,7 +49,7 @@ function autoDetectLang(words: Word[]): string {
 function parseLines(text: string): Word[] {
   return text.trim().split('\n')
     .filter(l => l.trim())
-    .map((line, i) => {
+    .map(line => {
       let parts = line.split(/[|,\t\/]|\s*:\s*/).map(p => p.trim()).filter(Boolean)
       // Space fallback: "사과 apple" — detect language boundary
       if (parts.length < 2) {
@@ -61,7 +61,7 @@ function parseLines(text: string): Word[] {
         if (boundary > 0) parts = [tokens.slice(0, boundary).join(' '), tokens.slice(boundary).join(' ')]
       }
       return {
-        id: `WORD${String(i + 1).padStart(3, '0')}`,
+        id: `WORD-${crypto.randomUUID()}`,
         en: parts[0] || '',
         ko: parts[1] || '',
         type: 'A' as const,

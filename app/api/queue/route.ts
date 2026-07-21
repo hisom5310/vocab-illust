@@ -23,8 +23,8 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: '단어 목록이 없습니다' }, { status: 400, headers: CORS })
     }
 
-    const wordList = words.map((w, i) => ({
-      id: w.id || `WORD${String(i + 1).padStart(3, '0')}`,
+    const wordList = words.map(w => ({
+      id: w.id || `WORD-${crypto.randomUUID()}`,
       en: w.en || '',
       ko: w.ko || '',
       type: (w.type || 'A') as Word['type'],

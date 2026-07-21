@@ -45,10 +45,10 @@ function detectCourseTag(targetWord: string, nativeWord: string): string {
   return target || ''
 }
 
-function parseLines(text: string, startIdx: number): Word[] {
+function parseLines(text: string): Word[] {
   return text.trim().split('\n')
     .filter(l => l.trim())
-    .map((line, i) => {
+    .map(line => {
       let parts = line.split(/[|,\t\/]|\s*:\s*/).map(p => p.trim()).filter(Boolean)
       if (parts.length < 2) {
         const tokens = line.trim().split(/\s+/)
@@ -58,7 +58,7 @@ function parseLines(text: string, startIdx: number): Word[] {
         }
         if (boundary > 0) parts = [tokens.slice(0, boundary).join(' '), tokens.slice(boundary).join(' ')]
       }
-      return { id: `WORD${String(startIdx + i + 1).padStart(3, '0')}`, en: parts[0] || '', ko: parts[1] || '', type: 'A' as const }
+      return { id: `WORD-${crypto.randomUUID()}`, en: parts[0] || '', ko: parts[1] || '', type: 'A' as const }
     })
     .filter(w => w.en && w.ko)
 }
@@ -307,7 +307,7 @@ export default function ReviewPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [lightbox, prevImage, nextImage, closeLightbox])
 
-  const parseAddText = () => setAddWords(parseLines(addText, cards.length))
+  const parseAddText = () => setAddWords(parseLines(addText))
 
   const handleAddFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -316,7 +316,7 @@ export default function ReviewPage() {
     reader.onload = ev => {
       const text = ev.target?.result as string
       setAddText(text.trim())
-      setAddWords(parseLines(text, cards.length))
+      setAddWords(parseLines(text))
     }
     reader.readAsText(file)
     e.target.value = ''
