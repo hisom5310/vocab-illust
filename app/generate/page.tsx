@@ -110,24 +110,46 @@ function GenerateContent() {
     await idbSet('vocab-results', mergedResults)
     await idbSet('vocab-card-statuses', mergedStatuses)
 
-    // Background save to server (non-blocking)
-    const [savedLang, savedCourse] = await Promise.all([
-      idbGet<string>('vocab-lang'),
-      idbGet<string>('vocab-course'),
-    ])
-    fetch('/api/storage/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        results: mergedResults,
-        statuses: mergedStatuses,
-        lang: savedLang ?? '',
-        course: savedCourse ?? '',
-      }),
-    })
-      .then(r => r.json())
-      .then(({ sessionId }) => { if (sessionId) localStorage.setItem('vocab-last-session', sessionId) })
-      .catch(() => {})
+    // Background save to server (non-blocking).
+    // Only this batch's new items (`res`) are sent, chunked, appending to a persisted
+    // session id — sending the full accumulated history every time would eventually
+    // exceed the platform's request-size limit and fail silently.
+    ;(async () => {
+      const [savedLang, savedCourse, storedSessionId] = await Promise.all([
+        idbGet<string>('vocab-lang'),
+        idbGet<string>('vocab-course'),
+        idbGet<string>('vocab-server-session-id'),
+      ])
+      let serverSessionId = storedSessionId ?? undefined
+      const CHUNK_SIZE = 8
+      for (let i = 0; i < res.length; i += CHUNK_SIZE) {
+        const chunk = res.slice(i, i + CHUNK_SIZE)
+        try {
+          const r = await fetch('/api/storage/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              results: chunk,
+              statuses: mergedStatuses,
+              lang: savedLang ?? '',
+              course: savedCourse ?? '',
+              sessionId: serverSessionId,
+            }),
+          })
+          const data = await r.json()
+          if (data.sessionId) {
+            const sid: string = data.sessionId
+            serverSessionId = sid
+            await idbSet('vocab-server-session-id', sid)
+            localStorage.setItem('vocab-last-session', sid)
+          } else if (data.error) {
+            console.error('server backup chunk failed:', data.error)
+          }
+        } catch (e) {
+          console.error('server backup chunk failed:', e)
+        }
+      }
+    })()
 
     router.push('/review')
   }

@@ -92,12 +92,18 @@ export async function POST(request: Request) {
   }
 
   const basePrompt = TYPE_PROMPTS[type] || TYPE_PROMPTS.A
-  let prompt = basePrompt
+  const typePrompt = basePrompt
     .replace(/\{WORD\}/g, word.en)
 
-  if (feedback) {
-    prompt += `\n\nImportant corrections from previous attempt: ${feedback}`
-  }
+  const prompt = feedback
+    ? `MANDATORY REVISION INSTRUCTIONS — HIGHEST PRIORITY. These override ANY conflicting rule in the composition spec below, including required human figures, characters, speech bubbles, or text:
+${feedback}
+
+If the instructions above say not to use people/characters/hands/faces or not to use text/speech bubbles, you MUST omit them entirely, even though the composition spec below requests them — replace with a simple flat icon-only illustration instead. The feedback above always wins over the composition spec.
+
+---
+${typePrompt}`
+    : typePrompt
 
   try {
     let b64: string | null | undefined
