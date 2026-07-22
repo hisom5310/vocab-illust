@@ -93,7 +93,7 @@ export default function ReviewPage() {
   const [sessions, setSessions] = useState<SessionMeta[] | null>(null)
   const [loadingSession, setLoadingSession] = useState(false)
   const [selectedCards, setSelectedCards] = useState<Set<number>>(new Set())
-  const [restorePanel, setRestorePanel] = useState(false)
+  const [autoMergedCount, setAutoMergedCount] = useState(0)
 
   const sessionResultToCard = (
     r: ServerResult,
@@ -122,40 +122,44 @@ export default function ReviewPage() {
     setRecovering(false)
   }
 
-  const openRestorePanel = async () => {
-    setRestorePanel(true)
-    if (sessions === null) {
-      try {
-        const r = await fetch('/api/storage/sessions')
-        const { sessions: s } = await r.json()
-        setSessions(s ?? [])
-      } catch {
-        setSessions([])
-      }
-    }
-  }
-
-  const mergeSession = async (sessionId: string) => {
-    setLoadingSession(true)
+  // Silently reconcile local results with everything backed up on the server, so
+  // illustrations made in another browser/session or before a data-loss bug always
+  // reappear here without the user having to find and click anything.
+  const autoSyncFromServer = async (localIds: string[]) => {
     try {
-      const res = await fetch(`/api/storage/sessions/${sessionId}`)
-      const session: ServerSession = await res.json()
-      const statusMap = Object.fromEntries((session.statuses ?? []).map(s => [s.id, s]))
-      const existingIds = new Set(cards.map(c => c.result.word.id))
-      const newCards = session.results
-        .filter(r => !existingIds.has(r.word.id))
-        .map(r => sessionResultToCard(r, statusMap))
-      if (newCards.length === 0) {
-        alert('이 세션의 항목은 이미 모두 포함되어 있어요')
-      } else {
-        setCards(prev => [...prev, ...newCards])
-        alert(`${newCards.length}개 항목을 불러왔어요`)
+      const listRes = await fetch('/api/storage/sessions')
+      const { sessions: sessionMetas } = await listRes.json() as { sessions: SessionMeta[] }
+      if (!sessionMetas?.length) return
+
+      const sessionData = await Promise.all(sessionMetas.map(async s => {
+        try {
+          const r = await fetch(`/api/storage/sessions/${s.id}`)
+          return await r.json() as ServerSession
+        } catch {
+          return null
+        }
+      }))
+
+      const known = new Set(localIds)
+      const newCards: CardState[] = []
+      for (const session of sessionData) {
+        if (!session?.results) continue
+        const statusMap = Object.fromEntries((session.statuses ?? []).map(s => [s.id, s]))
+        for (const r of session.results) {
+          if (!known.has(r.word.id)) {
+            known.add(r.word.id)
+            newCards.push(sessionResultToCard(r, statusMap))
+          }
+        }
       }
-      setRestorePanel(false)
+
+      if (newCards.length > 0) {
+        setCards(prev => [...prev, ...newCards])
+        setAutoMergedCount(c => c + newCards.length)
+      }
     } catch {
-      alert('세션 불러오기 실패')
+      // silent — server sync is best-effort, local data is still shown
     }
-    setLoadingSession(false)
   }
 
   const restoreSession = async (sessionId: string) => {
@@ -209,7 +213,9 @@ export default function ReviewPage() {
           langs,
         }
       }))
+      autoSyncFromServer(results.map(r => r.word.id))
     })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
 
   useEffect(() => {
@@ -531,6 +537,14 @@ export default function ReviewPage() {
           </div>
         )}
 
+        {/* 서버 백업 자동 동기화 배너 */}
+        {autoMergedCount > 0 && (
+          <div className="mt-6 flex items-center justify-between bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 text-sm text-teal-700">
+            <span>☁️ 서버에 백업된 이전 세션에서 {autoMergedCount}개 항목을 자동으로 불러왔어요</span>
+            <button onClick={() => setAutoMergedCount(0)} className="text-teal-400 hover:text-teal-600 ml-4">✕</button>
+          </div>
+        )}
+
         {/* ① Header */}
         <div className="pt-10 pb-6 flex items-center justify-between">
           <div>
@@ -559,12 +573,6 @@ export default function ReviewPage() {
               className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
             >
               + 단어 추가 생성
-            </button>
-            <button
-              onClick={() => (restorePanel ? setRestorePanel(false) : openRestorePanel())}
-              className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
-            >
-              이전 세션 불러오기
             </button>
             <button
               onClick={downloadApproved}
@@ -612,44 +620,6 @@ export default function ReviewPage() {
         </div>
 
         <div className="pt-6 pb-10">
-
-          {/* 이전 세션 불러오기 panel */}
-          {restorePanel && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-gray-900 text-sm">이전 세션 불러오기</h3>
-                <span className="text-xs text-gray-400">현재 목록에 없는 항목만 추가돼요</span>
-              </div>
-              {sessions === null ? (
-                <p className="text-sm text-gray-400">세션 목록 불러오는 중...</p>
-              ) : sessions.length === 0 ? (
-                <p className="text-sm text-gray-400">서버에 저장된 세션이 없어요.</p>
-              ) : (
-                <div className="space-y-2">
-                  {sessions.map(s => (
-                    <button
-                      key={s.id}
-                      onClick={() => mergeSession(s.id)}
-                      disabled={loadingSession}
-                      className="w-full text-left px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl hover:border-teal-400 hover:bg-teal-50 transition-colors disabled:opacity-50"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-sm font-medium text-gray-800">
-                            {s.course || s.lang || '알 수 없는 코스'}
-                          </span>
-                          <span className="ml-2 text-xs text-gray-400">{s.count}개</span>
-                        </div>
-                        <span className="text-xs text-gray-400">
-                          {new Date(s.createdAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* ③ Add panel */}
           {addPanel && (
