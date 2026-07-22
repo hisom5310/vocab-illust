@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { idbGet, idbSet } from '../lib/storage'
+import { detectLang, detectCourseTag } from '../lib/lang'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
 type Result = { word: Word; image: string | null; error: string | null; lang?: string }
@@ -24,26 +25,6 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 const PRESET_LANGS = ['ENKO', 'FREN', 'JAEN', 'KOEN', 'KOJA', 'KOFR', 'ESEN']
-
-function detectLang(text: string): string {
-  if (!text) return ''
-  if (/[぀-ヿ]/.test(text)) return 'JA'
-  if (/[가-힣]/.test(text)) return 'KO'
-  if (/[؀-ۿ]/.test(text)) return 'AR'
-  if (/[Ѐ-ӿ]/.test(text)) return 'RU'
-  if (/[一-鿿]/.test(text)) return 'ZH'
-  if (/[ñÑ¿¡]/.test(text)) return 'ES'
-  if (/[çÇœŒæÆèéêëàâîïôùûü]/.test(text)) return 'FR'
-  if (/[a-zA-Z]/.test(text)) return 'EN'
-  return ''
-}
-
-function detectCourseTag(targetWord: string, nativeWord: string): string {
-  const target = detectLang(targetWord)
-  const native = detectLang(nativeWord)
-  if (target && native && target !== native) return target + native
-  return target || ''
-}
 
 function parseLines(text: string): Word[] {
   return text.trim().split('\n')

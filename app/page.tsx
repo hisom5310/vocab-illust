@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { idbSet } from './lib/storage'
+import { detectLang, detectCourseTag } from './lib/lang'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
 
@@ -14,28 +15,6 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 const PRESET_LANGS = ['ENKO', 'KOEN', 'FREN', 'JAEN', 'KOJA', 'KOFR', 'ESEN']
-
-// 언어 코드: 학습어/모국어 각 컬럼의 문자 분석
-function detectLang(text: string): string {
-  if (!text) return ''
-  if (/[぀-ヿ]/.test(text)) return 'JA'  // 히라가나/가타카나 → Japanese
-  if (/[가-힣]/.test(text)) return 'KO'  // 한글 → Korean
-  if (/[؀-ۿ]/.test(text)) return 'AR'  // Arabic
-  if (/[Ѐ-ӿ]/.test(text)) return 'RU'  // Cyrillic
-  if (/[一-鿿]/.test(text)) return 'ZH'  // CJK (일본어 체크 후)
-  if (/[ñÑ¿¡]/.test(text)) return 'ES'           // 스페인어 특수문자
-  if (/[çÇœŒæÆèéêëàâîïôùûü]/.test(text)) return 'FR'  // 프랑스어 특수문자
-  if (/[a-zA-Z]/.test(text)) return 'EN'
-  return ''
-}
-
-// 학습어 + 모국어 두 컬럼으로 코스 태그 생성 (e.g. "apple|사과" → "ENKO")
-function detectCourseTag(targetWord: string, nativeWord: string): string {
-  const target = detectLang(targetWord)
-  const native = detectLang(nativeWord)
-  if (target && native && target !== native) return native + target
-  return target || ''
-}
 
 function autoDetectLang(words: Word[]): string {
   const counts: Record<string, number> = {}
