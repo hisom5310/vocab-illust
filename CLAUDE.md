@@ -18,7 +18,9 @@ TEUIDA 보캡 일러스트 일괄 생성 웹툴. 단어 목록을 입력하면 O
 
 ## 핵심 기술 결정
 
-- **이미지 생성**: OpenAI `gpt-image-1` (b64_json 응답, 투명 배경)
+- **이미지 생성**: OpenAI `gpt-image-1.5` (b64_json 응답, 투명 배경)
+  - gpt-image-1은 2026-10-23 지원 종료 예정이라 gpt-image-1.5로 마이그레이션함
+  - gpt-image-2는 투명 배경(`background: 'transparent'`) 자체를 지원하지 않아 제외 (요청 시 400 에러, 미지정 시 체커보드 무늬를 opaque 픽셀로 그림)
 - **저장소**: IndexedDB (`app/lib/storage.ts` — `idbGet`/`idbSet`)
   - localStorage는 5MB 한계로 이미지 저장 불가 → IndexedDB 사용
   - `vocab-words`: 입력 단어 목록
@@ -56,4 +58,4 @@ TEUIDA 보캡 일러스트 일괄 생성 웹툴. 단어 목록을 입력하면 O
 
 - 새로고침 후 데이터 유지: 같은 프로덕션 URL(vocab-illust.vercel.app)에서만 가능. Vercel 배포별 고유 URL은 IndexedDB 다름.
 - 서버 저장 미구현: 다른 브라우저·기기에서는 데이터 공유 안 됨 (Vercel KV + Blob 연동 예정)
-- 투명 배경: `images.generate()`에만 적용. `images.edit()`(레퍼런스 사용 시)는 배경 불투명.
+- 투명 배경: gpt-image-1.5는 `images.generate()`·`images.edit()` 둘 다 `background: 'transparent'` + `output_format: 'png'`를 함께 넘겨야 실제 알파 투명이 적용됨 (하나만 넘기면 opaque로 나오거나 alpha=0 전체로 깨짐).
