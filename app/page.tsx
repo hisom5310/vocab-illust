@@ -69,7 +69,8 @@ function HomeContent() {
     }
     if (data) {
       try {
-        const decoded: Word[] = JSON.parse(atob(data))
+        const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0))
+        const decoded: Word[] = JSON.parse(new TextDecoder().decode(bytes))
         setWords(decoded)
       } catch { /* ignore */ }
     }
