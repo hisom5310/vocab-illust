@@ -329,6 +329,7 @@ ${typePrompt}`
 
   try {
     let b64: string | null | undefined
+    let debugFallback: string | null = null
 
     if (referenceImage) {
       // User-supplied reference takes priority (regeneration with specific reference)
@@ -364,6 +365,7 @@ ${typePrompt}`
       } catch (refErr) {
         // Template file missing/unreadable — fall back to the legacy text-only anatomy spec
         console.error('character-template edit() failed, falling back to generate():', refErr)
+        debugFallback = String(refErr)
         const response = await openai.images.generate({
           model: 'gpt-image-1.5',
           prompt: `${prompt}\n\n${CHAR_SPEC}`,
@@ -394,6 +396,7 @@ ${typePrompt}`
         b64 = response.data?.[0]?.b64_json
       } catch (refErr) {
         console.error('style-ref edit() failed, falling back to generate():', refErr)
+        debugFallback = String(refErr)
         const response = await openai.images.generate({
           model: 'gpt-image-1.5',
           prompt,
@@ -408,7 +411,10 @@ ${typePrompt}`
 
     if (!b64) throw new Error('이미지 생성 실패')
     const transparentBuffer = await removeWhiteBackground(Buffer.from(b64, 'base64'))
-    return Response.json({ image: `data:image/png;base64,${transparentBuffer.toString('base64')}` })
+    return Response.json({
+      image: `data:image/png;base64,${transparentBuffer.toString('base64')}`,
+      ...(debugFallback ? { debugFallback } : {}),
+    })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '이미지 생성 실패'
     return Response.json({ error: message }, { status: 500 })
