@@ -235,7 +235,8 @@ Composition: One clear representative object centered, filling 55–70% of canva
 Decorative elements rule — judge by word type:
   • Add 2–3 small semantic elements ONLY if they reinforce the word's identity. Place at diagonal positions, not grid-aligned. Examples: party→confetti+stars, music→notes, fire→sparks, rain→droplets, love→hearts.
   • OMIT all decorative elements if the object is self-explanatory on its own. Examples: clothing (T-shirt, dress, pants), food items, furniture, tools, color swatches — the silhouette alone is enough.
-Choose the most instantly recognizable form of "{WORD}". Simplify to essential shapes only — remove all surface texture, patterns, and unnecessary details.`,
+Choose the most instantly recognizable form of "{WORD}". Simplify to essential shapes only — remove all surface texture, patterns, and unnecessary details.
+CRITICAL for round/spherical objects (balls, fruit, wheels, dials, etc.): render as a FLAT filled circle with panel/segment lines only — absolutely NO shading, NO highlight ellipse, NO rim light, NO gradient to suggest volume or roundness. A ball must look like a flat colored disc, not a sphere.`,
 
   C: `${STYLE_BASE}
 
@@ -329,7 +330,6 @@ ${typePrompt}`
 
   try {
     let b64: string | null | undefined
-    let debugFallback: string | null = null
 
     if (referenceImage) {
       // User-supplied reference takes priority (regeneration with specific reference)
@@ -365,7 +365,6 @@ ${typePrompt}`
       } catch (refErr) {
         // Template file missing/unreadable — fall back to the legacy text-only anatomy spec
         console.error('character-template edit() failed, falling back to generate():', refErr)
-        debugFallback = String(refErr)
         const response = await openai.images.generate({
           model: 'gpt-image-1.5',
           prompt: `${prompt}\n\n${CHAR_SPEC}`,
@@ -396,7 +395,6 @@ ${typePrompt}`
         b64 = response.data?.[0]?.b64_json
       } catch (refErr) {
         console.error('style-ref edit() failed, falling back to generate():', refErr)
-        debugFallback = String(refErr)
         const response = await openai.images.generate({
           model: 'gpt-image-1.5',
           prompt,
@@ -411,10 +409,7 @@ ${typePrompt}`
 
     if (!b64) throw new Error('이미지 생성 실패')
     const transparentBuffer = await removeWhiteBackground(Buffer.from(b64, 'base64'))
-    return Response.json({
-      image: `data:image/png;base64,${transparentBuffer.toString('base64')}`,
-      ...(debugFallback ? { debugFallback } : {}),
-    })
+    return Response.json({ image: `data:image/png;base64,${transparentBuffer.toString('base64')}` })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '이미지 생성 실패'
     return Response.json({ error: message }, { status: 500 })
