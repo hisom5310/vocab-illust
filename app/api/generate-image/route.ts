@@ -54,14 +54,52 @@ async function removeWhiteBackground(pngBuffer: Buffer): Promise<Buffer> {
     if (y < height - 1) trySeed(p + width)
   }
 
-  // Hard cutout only — no soft-alpha feathering. An earlier version faded alpha near
-  // the cut edge for anti-aliasing, but left the pixel's RGB at its original near-white
-  // value, only reducing opacity. That produces "semi-transparent white" boundary pixels:
-  // correct on a white page (invisible), but a visible light halo on any other background,
-  // since alpha-blending near-white at partial opacity always lightens whatever is behind it.
-  // A hard 0/255 cutout has no such pixels, so there is nothing to glow regardless of backdrop.
+  // Pass 2: decontaminated feather on the boundary ring only (pixels adjacent to
+  // removed background, NOT the whole image — so pale design colors like Gray 100
+  // #EAEEF4 sitting away from any real edge are never touched).
+  //
+  // A hard 0/255 cutout leaves the anti-aliased blend pixels between object and
+  // background fully OPAQUE at their blended (whitened) color — a visible light-gray
+  // fringe around every shape on any backdrop. The earlier feathered version fixed
+  // the opacity but kept the whitened RGB, so at partial alpha it lightens whatever
+  // it's composited over — a halo, just a differently-colored one.
+  // Fix: do both — reduce alpha AND un-blend ("decontaminate") the RGB back toward
+  // the true foreground color, removing the white the anti-aliasing mixed in.
+  const RADIUS = 2
+  const LOW = 180
+  const HIGH = 245
+  const nearBg = new Uint8Array(n)
   for (let p = 0; p < n; p++) {
-    if (bg[p]) data[p * channels + 3] = 0
+    if (!bg[p]) continue
+    const x = p % width
+    const y = (p - x) / width
+    for (let dy = -RADIUS; dy <= RADIUS; dy++) {
+      const ny = y + dy
+      if (ny < 0 || ny >= height) continue
+      for (let dx = -RADIUS; dx <= RADIUS; dx++) {
+        const nx = x + dx
+        if (nx < 0 || nx >= width) continue
+        const np = ny * width + nx
+        if (!bg[np]) nearBg[np] = 1
+      }
+    }
+  }
+
+  for (let p = 0; p < n; p++) {
+    const i = p * channels
+    if (bg[p]) {
+      data[i + 3] = 0
+      continue
+    }
+    if (!nearBg[p]) continue
+    const t = Math.min(1, Math.max(0, (minChannel(p) - LOW) / (HIGH - LOW)))
+    if (t <= 0) continue
+    const alpha = 255 * (1 - t)
+    const keep = 1 - t
+    data[i] = Math.min(255, Math.max(0, Math.round((data[i] - t * 255) / keep)))
+    data[i + 1] = Math.min(255, Math.max(0, Math.round((data[i + 1] - t * 255) / keep)))
+    data[i + 2] = Math.min(255, Math.max(0, Math.round((data[i + 2] - t * 255) / keep)))
+    data[i + 3] = Math.min(data[i + 3], Math.round(alpha))
   }
 
   return sharp(data, { raw: { width, height, channels } }).png().toBuffer()
