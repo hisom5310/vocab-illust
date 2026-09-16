@@ -125,7 +125,11 @@ const STYLE_BASE = `STRICT STYLE RULES (never break these):
   Skin A: #E2B6AA  Skin B: #F6D9D0
 - Use the level-300 color as main, level-500 for shadow/depth. Max 4 colors for Type A, max 5 for others.
 - Object fills the canvas 55–70%. Even white space on all sides.
-- Silhouette alone must convey the word — readable in grayscale.`
+- Silhouette alone must convey the word — readable in grayscale.
+- CRITICAL — NO TEXT ANYWHERE: never render the vocabulary word itself, its translation, or any caption, title, or label as letters in the image. No writing on signs, books, screens, documents, passports, packaging, banners, or storefronts. The illustration must carry the meaning through shape alone.
+  • Where a real-world object would carry writing (a sign, a book cover, an ID card, a document), draw the text as plain rounded-rectangle placeholder bars in a darker level of the surrounding fill — first bar longest, each following bar shorter — never as readable characters.
+  • The ONLY exceptions: a number that IS the word (100, 1K, a date on a calendar), and a universally understood symbol (%, +, !, arrow). Nothing else, and never longer than 5 characters.
+- Brand/product words: never reproduce a real company logo, wordmark, or trademarked symbol. Draw a generic, simplified object that suggests the category instead.`
 
 // Legacy text-only character anatomy spec — fallback only, used when a fixed
 // character template file is missing. Normal path uses CHARACTER_TEMPLATES below.
