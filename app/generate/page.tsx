@@ -6,6 +6,43 @@ import { idbSet, idbGet } from '../lib/storage'
 
 type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
 type Result = { word: Word; image: string | null; error: string | null; lang?: string }
+type CardStatus = { id: string; status: string; comment: string }
+
+// Results are merged into IDB by word.id, so a shared id (e.g. a sheet's 관리코드 like
+// EEV1701 used for every word in that set) makes later words overwrite earlier ones.
+// Suffix repeats with a/b/c… to keep every word's card.
+function withUniqueIds(words: Word[]): Word[] {
+  const counts = new Map<string, number>()
+  for (const w of words) counts.set(w.id, (counts.get(w.id) ?? 0) + 1)
+  const seen = new Map<string, number>()
+  return words.map(w => {
+    if ((counts.get(w.id) ?? 0) < 2) return w
+    const n = seen.get(w.id) ?? 0
+    seen.set(w.id, n + 1)
+    return { ...w, id: `${w.id}${String.fromCharCode(97 + n)}` }
+  })
+}
+
+// Merge finished results into IDB right away, so closing the tab mid-batch
+// keeps everything generated so far.
+async function persistResults(done: Result[]) {
+  const mergedResults = await idbGet<Result[]>('vocab-results') ?? []
+  const mergedStatuses = await idbGet<CardStatus[]>('vocab-card-statuses') ?? []
+  for (const r of done) {
+    const idx = mergedResults.findIndex(e => e.word.id === r.word.id)
+    if (idx >= 0) {
+      mergedResults[idx] = r
+    } else {
+      mergedResults.push(r)
+      if (!mergedStatuses.find(s => s.id === r.word.id)) {
+        mergedStatuses.push({ id: r.word.id, status: 'pending', comment: '' })
+      }
+    }
+  }
+  await idbSet('vocab-results', mergedResults)
+  await idbSet('vocab-card-statuses', mergedStatuses)
+  return mergedStatuses
+}
 
 function GenerateContent() {
   const router = useRouter()
@@ -30,7 +67,8 @@ function GenerateContent() {
           lang: string
           course: string
         }
-        const { words: w, lang, course } = decoded
+        const { lang, course } = decoded
+        const w = withUniqueIds(decoded.words ?? [])
         if (!w?.length) { router.push('/'); return }
         if (course) setCourseLabel(course)
         setWords(w)
@@ -53,8 +91,9 @@ function GenerateContent() {
       idbGet<Word[]>('vocab-words'),
       idbGet<string>('vocab-lang'),
       idbGet<string>('vocab-course'),
-    ]).then(([w, l, c]) => {
-      if (!w) { router.push('/'); return }
+    ]).then(([stored, l, c]) => {
+      if (!stored) { router.push('/'); return }
+      const w = withUniqueIds(stored)
       const lang = l || ''
       if (c) setCourseLabel(c)
       setWords(w)
@@ -84,31 +123,12 @@ function GenerateContent() {
         res[i] = { word, image: null, error: '생성 실패', lang }
       }
       setResults([...res])
+      await persistResults([res[i]])
     }
     setCurrent(-1)
     setDone(true)
 
-    // Merge with existing results (preserve previously generated images)
-    const existingResults = await idbGet<Result[]>('vocab-results') ?? []
-    const existingStatuses = await idbGet<{ id: string; status: string; comment: string }[]>('vocab-card-statuses') ?? []
-
-    const mergedResults = [...existingResults]
-    const mergedStatuses = [...existingStatuses]
-
-    for (const r of res) {
-      const idx = mergedResults.findIndex(e => e.word.id === r.word.id)
-      if (idx >= 0) {
-        mergedResults[idx] = r
-      } else {
-        mergedResults.push(r)
-        if (!mergedStatuses.find(s => s.id === r.word.id)) {
-          mergedStatuses.push({ id: r.word.id, status: 'pending', comment: '' })
-        }
-      }
-    }
-
-    await idbSet('vocab-results', mergedResults)
-    await idbSet('vocab-card-statuses', mergedStatuses)
+    const mergedStatuses = await persistResults(res)
 
     // Background save to server (non-blocking).
     // Only this batch's new items (`res`) are sent, chunked, appending to a persisted
