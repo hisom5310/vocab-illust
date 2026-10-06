@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import sharp from 'sharp'
 
-export const maxDuration = 60
+export const maxDuration = 120
 
 // Requesting background:'transparent' directly from the model causes it to treat
 // any near-white foreground content (white coats, white collars, etc.) as background
@@ -263,6 +263,7 @@ Expression: neutral-to-friendly smile, adjust only the mouth arc.`
 const CHARACTER_EDIT_PREFIX = `CHARACTER REFERENCE — the attached image is a FIXED face/head template. Use it as-is for this character:
 Keep identical, at the EXACT SAME SCALE AND POSITION as the reference — do not zoom in, crop tighter, or enlarge the head: face shape (including the rounded cheek bumps), hair silhouette and color, collar style, skin tone, and the amount of empty margin above the head.
 CRITICAL — NO NOSE: the reference has no nose. Do not add one. The gap between the eyes and mouth must stay bare skin, exactly like the reference — no bump, no curve, no line, nothing there at all, even though this is a different pose/outfit.
+CRITICAL — NO OUTLINES ANYWHERE: no dark contour line around the head, body, hands, props, or effects (flames, drops, stars). Shapes are separated only by touching fills of different colors. Do not add glasses unless the reference already has them.
 CRITICAL — NO EXTRA LINES ON CLOTHING: any new clothing (coat, uniform, etc.) must be a single flat solid color shape with no fold lines, no lapel lines, no stitching lines, no internal strokes of any kind — flat fill only, same rule as the reference top.
 You MAY change: the eyes, eyebrows, and mouth TOGETHER as one unit (to match the required expression below — never change only one of the three, they must match the same mood), the shirt/top color, and add a pose, props, or symbolic elements as instructed below — but keep the face shape, hair, and overall head/shoulder framing identical to the reference.
 Do not redraw the face from scratch — edit around the fixed reference, do not shrink or omit the hair.
@@ -301,6 +302,7 @@ Accent placement: beside the head, never overlapping the face.
 CATEGORY (a) SOLO REACTION:
 Composition: One half-body figure, facing forward, centered.
 Use the expression table above for the face. Add exactly one accent from the matching row.
+No hands or arms — the figure is shoulders-up exactly like the reference template. If "{WORD}" needs an object (food, drink, etc.), draw it as a separate flat icon floating beside the head, never held.
 
 CATEGORY (b) TWO-FIGURE INTERACTION:
 Composition: Exactly 2 half-body figures, positioned left-right, angled 15–30° toward each other (not both flat front-facing). Acting figure at 100% scale, the other at 85% scale for depth.
@@ -386,11 +388,14 @@ ${typePrompt}`
         size: '1024x1024',
         quality: 'medium',
         output_format: 'png',
+        input_fidelity: 'high',
       })
       b64 = response.data?.[0]?.b64_json
     } else if (isCharacterType) {
       // Type B/C base generation: edit a fixed face template so the face form
       // stays pixel-consistent instead of being re-described in text each time.
+      // input_fidelity 'high' is what actually makes the model keep the template —
+      // at the default it redraws the person (new hair, fingers, outlined clothes).
       try {
         const templateKey = pickCharacterTemplate(word)
         const file = loadCharacterTemplate(templateKey)
@@ -402,6 +407,7 @@ ${typePrompt}`
           size: '1024x1024',
           quality: 'medium',
           output_format: 'png',
+          input_fidelity: 'high',
         })
         b64 = response.data?.[0]?.b64_json
       } catch (refErr) {
@@ -433,6 +439,7 @@ ${typePrompt}`
           size: '1024x1024',
           quality: 'medium',
           output_format: 'png',
+          input_fidelity: 'high',
         })
         b64 = response.data?.[0]?.b64_json
       } catch (refErr) {
