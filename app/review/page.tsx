@@ -1,301 +1,564 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { idbGet, idbSet } from '../lib/storage'
-import { detectLang, detectCourseTag } from '../lib/lang'
+import { fetchCourse, fetchCourses, fileName, generateForCard, saveCardRemote, type GenerateOptions } from '../lib/client'
+import { legacyCourse } from '../lib/legacy'
+import {
+  currentImage, STATUS_LABELS, TYPE_LABELS,
+  type Card, type CardStatus, type CourseSummary, type Word,
+} from '../lib/types'
 
-type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
-type Result = { word: Word; image: string | null; error: string | null; lang?: string }
-type Status = 'pending' | 'approved' | 'rejected'
-type CardState = {
-  result: Result
-  status: Status
-  comment: string
-  regenerating: boolean
-  newImage: string | null
-  isNew: boolean
-  langs: string[]
+type Filter = 'all' | CardStatus | 'trash'
+
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: 'all', label: '전체' },
+  { key: 'pending', label: '검토 대기' },
+  { key: 'approved', label: '승인' },
+  { key: 'edited', label: '수정 사용' },
+  { key: 'redrawn', label: '직접 제작' },
+  { key: 'queued', label: '생성 대기' },
+  { key: 'trash', label: '휴지통' },
+]
+
+// Quick status buttons on each card. Clicking the active one returns the card to "검토 대기".
+const QUICK_STATUSES: { status: CardStatus; label: string; active: string }[] = [
+  { status: 'approved', label: '승인', active: 'bg-teal-500 text-white border-teal-500' },
+  { status: 'edited', label: '수정 사용', active: 'bg-amber-400 text-white border-amber-400' },
+  { status: 'redrawn', label: '직접 제작', active: 'bg-gray-700 text-white border-gray-700' },
+]
+
+const matches = (card: Card, filter: Filter) =>
+  filter === 'trash' ? card.deleted : !card.deleted && (filter === 'all' || card.status === filter)
+
+async function downloadUrl(url: string, name: string) {
+  const blob = await (await fetch(url)).blob()
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(a.href)
 }
 
-type FilterType = 'all' | 'approved' | 'pending' | 'regenerated'
+// ---------- one-time import of work saved before server storage (v1) ----------
 
-const TYPE_LABELS: Record<string, string> = {
-  A: 'A — 사물/장소', B: 'B — 직업/역할', C: 'C — 동사/감정', D: 'D — 자연/계절',
-}
+type LegacyResult = { word: Word; image: string | null; error: string | null; lang?: string }
 
-const PRESET_LANGS = ['ENKO', 'FREN', 'JAEN', 'KOEN', 'KOJA', 'KOFR', 'ESEN']
-
-function parseLines(text: string): Word[] {
-  return text.trim().split('\n')
-    .filter(l => l.trim())
-    .map(line => {
-      let parts = line.split(/[|,\t\/]|\s*:\s*/).map(p => p.trim()).filter(Boolean)
-      if (parts.length < 2) {
-        const tokens = line.trim().split(/\s+/)
-        let boundary = -1
-        for (let j = 1; j < tokens.length; j++) {
-          if (detectLang(tokens[j - 1]) !== detectLang(tokens[j])) { boundary = j; break }
-        }
-        if (boundary > 0) parts = [tokens.slice(0, boundary).join(' '), tokens.slice(boundary).join(' ')]
+async function importLegacy(): Promise<number> {
+  let imported = 0
+  try {
+    if (!localStorage.getItem('vocab-v2-server-imported')) {
+      const res = await fetch('/api/legacy/import', { method: 'POST' })
+      if (res.ok) {
+        imported += (await res.json()).imported ?? 0
+        localStorage.setItem('vocab-v2-server-imported', '1')
       }
-      return { id: `WORD-${crypto.randomUUID()}`, en: parts[0] || '', ko: parts[1] || '', type: 'A' as const }
-    })
-    .filter(w => w.en && w.ko)
-}
+    }
+  } catch { /* retried next visit */ }
 
-type SessionMeta = { id: string; createdAt: string; lang: string; course: string; count: number }
-type ServerResult = { word: Word; imageUrl: string | null; error: string | null; lang?: string }
-type ServerSession = {
-  id: string; createdAt: string; lang: string; course: string
-  results: ServerResult[]
-  statuses: { id: string; status: Status; comment: string; isNew?: boolean; langs?: string[] }[]
-}
-
-export default function ReviewPage() {
-  const router = useRouter()
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [cards, setCards] = useState<CardState[]>([])
-  const [selectedLang, setSelectedLang] = useState<string>('all')
-  const [filter, setFilter] = useState<FilterType>('all')
-  const [expandedComment, setExpandedComment] = useState<number | null>(null)
-  const [refImages, setRefImages] = useState<Record<number, string>>({})
-  const [lbRefImage, setLbRefImage] = useState<string | null>(null)
-  const [lightbox, setLightbox] = useState<number | null>(null)
-  const [lightboxComment, setLightboxComment] = useState(false)
-  const [addPanel, setAddPanel] = useState(false)
-  const [addText, setAddText] = useState('')
-  const [addLang, setAddLang] = useState('')
-  const [addWords, setAddWords] = useState<Word[]>([])
-  const [addGenerating, setAddGenerating] = useState(false)
-  const [recovering, setRecovering] = useState(false)
-  const [vectorizing, setVectorizing] = useState<Set<number>>(new Set())
-  const [pendingSaved, setPendingSaved] = useState(0)
-  const [sessions, setSessions] = useState<SessionMeta[] | null>(null)
-  const [loadingSession, setLoadingSession] = useState(false)
-  const [selectedCards, setSelectedCards] = useState<Set<number>>(new Set())
-  const [autoMergedCount, setAutoMergedCount] = useState(0)
-
-  const sessionResultToCard = (
-    r: ServerResult,
-    statusMap: Record<string, { status: Status; comment: string; isNew?: boolean; langs?: string[] }>
-  ): CardState => {
+  if (await idbGet<boolean>('vocab-v2-imported')) return imported
+  const results = await idbGet<LegacyResult[]>('vocab-results')
+  if (!results?.length) {
+    await idbSet('vocab-v2-imported', true)
+    return imported
+  }
+  const statuses = await idbGet<{ id: string; status: string; comment: string }[]>('vocab-card-statuses') ?? []
+  const statusMap = Object.fromEntries(statuses.map(s => [s.id, s]))
+  const lastLang = await idbGet<string>('vocab-lang') ?? ''
+  const known = new Map<string, Set<string>>()
+  let failed = false
+  for (const r of results) {
+    if (!r.image) continue
+    const course = legacyCourse(r.word.id, r.lang || lastLang)
+    if (!known.has(course)) known.set(course, new Set((await fetchCourse(course)).map(c => c.id)))
+    const ids = known.get(course)!
+    if (ids.has(r.word.id)) continue
+    const now = new Date().toISOString()
     const saved = statusMap[r.word.id]
-    const image = r.imageUrl ?? null
-    const autoLang = detectCourseTag(r.word.en, r.word.ko)
-    const primaryLang = (r.lang && r.lang.length >= 4 ? r.lang : null)
-      || (saved?.langs || []).find(l => l.length >= 4)
-      || autoLang
-    return {
-      result: { word: r.word, image, error: r.error, lang: r.lang },
-      status: saved?.status ?? 'pending',
-      comment: saved?.comment ?? '',
-      regenerating: false,
-      newImage: null,
-      isNew: saved?.isNew ?? false,
-      langs: primaryLang ? [primaryLang] : [],
+    const card: Card = {
+      id: r.word.id, course, word: { ...r.word, type: r.word.type || 'A' },
+      status: saved?.status === 'approved' ? 'approved' : 'pending',
+      comment: saved?.comment ?? '', error: null, deleted: false, createdAt: now, updatedAt: now,
+      ...(r.image.startsWith('http')
+        ? { versions: [{ url: r.image, createdAt: now }], current: 0 }
+        : { versions: [], current: -1 }),
     }
-  }
-
-  const loadSessionIntoState = (session: ServerSession) => {
-    const statusMap = Object.fromEntries((session.statuses ?? []).map(s => [s.id, s]))
-    setCards(session.results.map(r => sessionResultToCard(r, statusMap)))
-    setRecovering(false)
-  }
-
-  // Silently reconcile local results with everything backed up on the server, so
-  // illustrations made in another browser/session or before a data-loss bug always
-  // reappear here without the user having to find and click anything.
-  const autoSyncFromServer = async (localIds: string[]) => {
     try {
-      const listRes = await fetch('/api/storage/sessions')
-      const { sessions: sessionMetas } = await listRes.json() as { sessions: SessionMeta[] }
-      if (!sessionMetas?.length) return
-
-      const sessionData = await Promise.all(sessionMetas.map(async s => {
-        try {
-          const r = await fetch(`/api/storage/sessions/${s.id}`)
-          return await r.json() as ServerSession
-        } catch {
-          return null
-        }
-      }))
-
-      const known = new Set(localIds)
-      const newCards: CardState[] = []
-      for (const session of sessionData) {
-        if (!session?.results) continue
-        const statusMap = Object.fromEntries((session.statuses ?? []).map(s => [s.id, s]))
-        for (const r of session.results) {
-          if (!known.has(r.word.id)) {
-            known.add(r.word.id)
-            newCards.push(sessionResultToCard(r, statusMap))
-          }
-        }
-      }
-
-      if (newCards.length > 0) {
-        setCards(prev => [...prev, ...newCards])
-        setAutoMergedCount(c => c + newCards.length)
-      }
+      await saveCardRemote(card, r.image.startsWith('data:') ? r.image : undefined)
+      ids.add(r.word.id)
+      imported++
     } catch {
-      // silent — server sync is best-effort, local data is still shown
+      failed = true
     }
   }
+  // Keep the browser copy until everything made it to the server.
+  if (!failed) await idbSet('vocab-v2-imported', true)
+  return imported
+}
 
-  const restoreSession = async (sessionId: string) => {
-    setLoadingSession(true)
-    try {
-      const res = await fetch(`/api/storage/sessions/${sessionId}`)
-      const session: ServerSession = await res.json()
-      // Persist to IndexedDB so it survives page refreshes
-      const results: Result[] = session.results.map(r => ({
-        word: r.word, image: r.imageUrl, error: r.error, lang: r.lang,
-      }))
-      await idbSet('vocab-results', results)
-      await idbSet('vocab-card-statuses', session.statuses ?? [])
-      loadSessionIntoState(session)
-    } catch {
-      alert('세션 불러오기 실패')
-    }
-    setLoadingSession(false)
-  }
+// ---------- page ----------
+
+function ReviewContent() {
+  const router = useRouter()
+  const params = useSearchParams()
+  const [courses, setCourses] = useState<CourseSummary[] | null>(null)
+  const [course, setCourse] = useState(params.get('course') ?? '')
+  const [cards, setCards] = useState<Card[]>([])
+  const [loadedFor, setLoadedFor] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [filter, setFilter] = useState<Filter>('all')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState<Set<string>>(new Set())
+  const [lightbox, setLightbox] = useState<string | null>(null)
+  const [saving, setSaving] = useState(0)
+  const [saveError, setSaveError] = useState(false)
+  const [banner, setBanner] = useState('')
+  const [seriesOpen, setSeriesOpen] = useState(false)
+  const [zipping, setZipping] = useState(false)
+
+  const cardsRef = useRef<Card[]>([])
+  useEffect(() => { cardsRef.current = cards }, [cards])
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+
+  const reloadCourses = useCallback(() => {
+    return fetchCourses().then(list => {
+      setCourses(list)
+      return list
+    }).catch(() => { setCourses([]); return [] as CourseSummary[] })
+  }, [])
 
   useEffect(() => {
-    Promise.all([
-      idbGet<Result[]>('vocab-results'),
-      idbGet<{ id: string; status: Status; comment: string; isNew?: boolean; langs?: string[] }[]>('vocab-card-statuses'),
-    ]).then(([results, statuses]) => {
-      if (!results) {
-        setRecovering(true)
-        fetch('/api/storage/sessions')
-          .then(r => r.json())
-          .then(({ sessions: s }) => setSessions(s ?? []))
-          .catch(() => setSessions([]))
-        return
-      }
-      const statusMap: Record<string, { status: Status; comment: string; isNew?: boolean; langs?: string[] }> =
-        statuses ? Object.fromEntries(statuses.map(s => [s.id, s])) : {}
-      setCards(results.map(r => {
-        const savedLangs = statusMap[r.word.id]?.langs
-        const sourceLang = r.lang && r.lang.length >= 4 ? r.lang : null
-        const savedValidLang = (savedLangs || []).find(l => l.length >= 4)
-        const autoLang = detectCourseTag(r.word.en, r.word.ko)
-        // Single lang per card. Priority: r.lang > savedLangs (first) > autoLang
-        const primaryLang = sourceLang || savedValidLang || autoLang
-        const langs = primaryLang ? [primaryLang] : []
-        return {
-          result: r,
-          status: statusMap[r.word.id]?.status ?? 'pending',
-          comment: statusMap[r.word.id]?.comment ?? '',
-          regenerating: false,
-          newImage: null,
-          isNew: statusMap[r.word.id]?.isNew ?? false,
-          langs,
-        }
-      }))
-      autoSyncFromServer(results.map(r => r.word.id))
+    reloadCourses().then(list => {
+      setCourse(prev => prev || list[0]?.course || '')
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router])
+    importLegacy().then(n => {
+      if (n > 0) {
+        setBanner(`예전 작업 ${n}개를 서버로 옮겼어요. 이제 어느 브라우저에서나 보여요.`)
+        reloadCourses()
+      }
+    })
+  }, [reloadCourses])
 
   useEffect(() => {
-    if (cards.length === 0) return
-    const results = cards.map(c => ({ ...c.result, image: c.newImage ?? c.result.image }))
-    idbSet('vocab-results', results)
-    const statuses = cards.map(c => ({
-      id: c.result.word.id, status: c.status, comment: c.comment, isNew: c.isNew, langs: c.langs,
-    }))
-    idbSet('vocab-card-statuses', statuses)
-  }, [cards])
+    if (!course) return
+    router.replace(`/review?course=${encodeURIComponent(course)}`, { scroll: false })
+    fetchCourse(course)
+      .then(loaded => { setCards(loaded); setLoadError('') })
+      .catch(e => setLoadError(e instanceof Error ? e.message : '불러오기 실패'))
+      .finally(() => setLoadedFor(course))
+  }, [course, router])
 
-  const setStatus = (idx: number, status: Status) => {
-    setCards(prev => prev.map((c, i) =>
-      i === idx ? { ...c, status, isNew: status === 'approved' ? false : c.isNew } : c
-    ))
+  const openCourse = (next: string) => {
+    if (next === course) return
+    setSelected(new Set())
+    setCards([])
+    setCourse(next)
   }
+  const loading = !!course && loadedFor !== course
 
-  const deleteCard = (idx: number) => {
-    if (lightbox !== null) {
-      if (lightbox === idx) closeLightbox()
-      else if (lightbox > idx) setLightbox(prev => prev !== null ? prev - 1 : null)
+  // ----- saving -----
+
+  const persist = useCallback(async (id: string) => {
+    const card = cardsRef.current.find(c => c.id === id)
+    if (!card) return
+    setSaving(n => n + 1)
+    try {
+      const saved = await saveCardRemote(card)
+      // Keep local edits made while the request was in flight; take the server's merged versions.
+      setCards(prev => prev.map(c => c.id === id ? { ...c, versions: saved.versions, current: saved.current } : c))
+      setSaveError(false)
+    } catch {
+      setSaveError(true)
+    } finally {
+      setSaving(n => n - 1)
     }
-    setCards(prev => prev.filter((_, i) => i !== idx))
-  }
+  }, [])
 
-  const setComment = (idx: number, comment: string) => {
-    setCards(prev => prev.map((c, i) => i === idx ? { ...c, comment } : c))
-  }
-
-  const readFileAsBase64 = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = e => resolve(e.target?.result as string)
-      reader.onerror = reject
-      reader.readAsDataURL(file)
+  const update = useCallback((id: string, patch: Partial<Card>, debounceMs = 0) => {
+    // Write the ref inside the updater too, so a save firing before the next render
+    // already sees this change.
+    setCards(prev => {
+      const next = prev.map(c => c.id === id ? { ...c, ...patch } : c)
+      cardsRef.current = next
+      return next
     })
+    const t = timers.current.get(id)
+    if (t) clearTimeout(t)
+    timers.current.set(id, setTimeout(() => {
+      timers.current.delete(id)
+      persist(id)
+    }, debounceMs))
+  }, [persist])
 
-  const regenerate = async (idx: number, referenceImage?: string) => {
-    const card = cards[idx]
-    setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: true, isNew: false } : c))
-    setLightboxComment(false)
-    setRefImages(prev => { const n = { ...prev }; delete n[idx]; return n })
-    setLbRefImage(null)
+  const retryFailedSaves = () => cardsRef.current.forEach(c => persist(c.id))
+
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (saving > 0 || timers.current.size > 0) e.preventDefault()
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [saving])
+
+  // ----- actions -----
+
+  const regenerate = useCallback(async (card: Card, opts: GenerateOptions = {}) => {
+    setBusy(prev => new Set(prev).add(card.id))
+    const fresh = cardsRef.current.find(c => c.id === card.id) ?? card
+    const updated = await generateForCard({ ...fresh, status: fresh.status === 'queued' ? 'queued' : 'pending' }, {
+      feedback: fresh.comment || undefined,
+      unitWords: cardsRef.current.filter(c => !c.deleted).map(c => c.word.en),
+      ...opts,
+    })
+    setCards(prev => prev.map(c => c.id === card.id ? updated : c))
+    setBusy(prev => { const s = new Set(prev); s.delete(card.id); return s })
+    if (updated.error) alert(`${card.word.en}: ${updated.error}`)
+  }, [])
+
+  const setStatus = (card: Card, status: CardStatus) =>
+    update(card.id, { status: card.status === status ? 'pending' : status })
+
+  const bulk = (patch: Partial<Card>) => {
+    selected.forEach(id => update(id, patch))
+    setSelected(new Set())
+  }
+
+  const downloadZip = async (target: Card[]) => {
+    const withImage = target.filter(c => currentImage(c))
+    if (!withImage.length) return
+    setZipping(true)
     try {
-      const r = await fetch('/api/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          word: card.result.word,
-          type: card.result.word.type,
-          feedback: card.comment || undefined,
-          referenceImage: referenceImage || undefined,
-        }),
-      })
-      const data = await r.json()
-      if (data.error) {
-        alert(`재생성 실패: ${data.error}`)
-        setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: false } : c))
-        return
-      }
-      setCards(prev => prev.map((c, i) =>
-        i === idx ? { ...c, regenerating: false, newImage: data.image || null, status: 'pending', isNew: true } : c
-      ))
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '알 수 없는 오류'
-      alert(`재생성 실패: ${message}`)
-      setCards(prev => prev.map((c, i) => i === idx ? { ...c, regenerating: false } : c))
+      const JSZip = (await import('jszip')).default
+      const zip = new JSZip()
+      await Promise.all(withImage.map(async c => {
+        zip.file(fileName(c), await (await fetch(currentImage(c)!)).blob())
+      }))
+      const blob = await zip.generateAsync({ type: 'blob' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${course.replace(/\s+/g, '_')}.zip`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } finally {
+      setZipping(false)
     }
   }
 
-  const downloadSingle = (card: CardState) => {
-    const img = card.newImage || card.result.image
-    if (!img) return
-    const a = document.createElement('a')
-    a.href = img
-    a.download = `${card.result.word.id}_${card.result.word.en.replace(/\s+/g, '_')}.png`
-    a.click()
+  const runSeries = (base: Card) => {
+    const url = currentImage(base)
+    if (!url) return
+    cards.filter(c => selected.has(c.id) && c.id !== base.id)
+      .forEach(c => regenerate(c, { referenceImage: url, series: true }))
+    setSeriesOpen(false)
+    setSelected(new Set())
   }
 
-  const downloadSVG = async (card: CardState, idx: number) => {
-    const img = card.newImage || card.result.image
+  // ----- derived -----
+
+  const visible = cards.filter(c => matches(c, filter))
+  const count = (f: Filter) => cards.filter(c => matches(c, f)).length
+  const queuedCount = count('queued')
+  const approvedCards = cards.filter(c => !c.deleted && c.status === 'approved')
+  const lbIndex = lightbox ? visible.findIndex(c => c.id === lightbox) : -1
+  const lbCard = lbIndex >= 0 ? visible[lbIndex] : null
+  const selectedCards = cards.filter(c => selected.has(c.id))
+
+  // ----- render -----
+
+  return (
+    <main className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex gap-6">
+        {/* Course list */}
+        <aside className="hidden md:block w-56 shrink-0">
+          <div className="sticky top-16">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">코스</h2>
+              <button onClick={() => router.push('/')} className="text-xs text-teal-600 hover:text-teal-700 font-medium">+ 새로 만들기</button>
+            </div>
+            <div className="space-y-0.5 max-h-[calc(100vh-8rem)] overflow-y-auto">
+              {courses === null && <p className="text-sm text-gray-400 px-2 py-1">불러오는 중…</p>}
+              {courses?.length === 0 && <p className="text-sm text-gray-400 px-2 py-1">아직 없어요</p>}
+              {courses?.map(c => (
+                <button
+                  key={c.slug}
+                  onClick={() => openCourse(c.course)}
+                  className={`w-full text-left px-2.5 py-2 rounded-lg text-sm transition-colors ${
+                    c.course === course ? 'bg-teal-50 text-teal-800' : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <span className="block truncate font-medium">{c.course}</span>
+                  <span className="block text-xs text-gray-400">
+                    승인 {c.counts.approved ?? 0} / {c.total}
+                    {(c.counts.queued ?? 0) > 0 && <span className="text-amber-500"> · 대기 {c.counts.queued}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        <div className="flex-1 min-w-0">
+          {/* Mobile course picker */}
+          <select
+            value={course}
+            onChange={e => openCourse(e.target.value)}
+            className="md:hidden w-full mb-4 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+          >
+            {courses?.map(c => <option key={c.slug} value={c.course}>{c.course}</option>)}
+          </select>
+
+          {banner && (
+            <div className="mb-4 flex items-center justify-between bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 text-sm text-teal-700">
+              <span>{banner}</span>
+              <button onClick={() => setBanner('')} className="ml-4 text-teal-400 hover:text-teal-600">✕</button>
+            </div>
+          )}
+
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">{course || '생성한 일러스트'}</h1>
+              <p className="text-xs mt-0.5 h-4">
+                {saveError
+                  ? <button onClick={retryFailedSaves} className="text-red-500 underline">저장 실패 — 다시 시도</button>
+                  : saving > 0
+                    ? <span className="text-gray-400">저장 중…</span>
+                    : cards.length > 0 && <span className="text-gray-400">모든 변경사항이 서버에 저장됨</span>}
+              </p>
+            </div>
+            {course && (
+              <div className="flex flex-wrap gap-2">
+                {queuedCount > 0 && (
+                  <button
+                    onClick={() => router.push(`/generate?course=${encodeURIComponent(course)}`)}
+                    className="px-3.5 py-2 bg-amber-400 text-white rounded-lg text-sm font-medium hover:bg-amber-500"
+                  >
+                    남은 {queuedCount}개 이어서 생성
+                  </button>
+                )}
+                <button
+                  onClick={() => router.push(`/?course=${encodeURIComponent(course)}`)}
+                  className="px-3.5 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50"
+                >
+                  + 단어 추가
+                </button>
+                <button
+                  onClick={() => downloadZip(approvedCards)}
+                  disabled={!approvedCards.length || zipping}
+                  className="px-3.5 py-2 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40"
+                >
+                  {zipping ? '압축 중…' : `승인된 ${approvedCards.length}개 다운로드`}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Filters + bulk actions */}
+          <div className="flex flex-wrap items-center gap-1.5 mb-4">
+            {FILTERS.map(f => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  filter === f.key ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                }`}
+              >
+                {f.label} {count(f.key)}
+              </button>
+            ))}
+            <div className="flex-1" />
+            {selected.size > 0 ? (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="text-gray-500 mr-1">{selected.size}개 선택</span>
+                {filter === 'trash' ? (
+                  <button onClick={() => bulk({ deleted: false })} className="px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 hover:bg-gray-50">복원</button>
+                ) : (
+                  <>
+                    <button onClick={() => bulk({ status: 'approved' })} className="px-2.5 py-1.5 rounded-lg bg-teal-500 text-white hover:bg-teal-600">승인</button>
+                    <button onClick={() => downloadZip(selectedCards)} className="px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 hover:bg-gray-50">다운로드</button>
+                    {selected.size >= 2 && (
+                      <button onClick={() => setSeriesOpen(true)} className="px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 hover:bg-gray-50" title="하나를 기준으로 나머지를 같은 틀로 다시 그려요 (달력·요일 등)">
+                        시리즈로 맞추기
+                      </button>
+                    )}
+                    <button onClick={() => { selectedCards.forEach(c => regenerate(c)); setSelected(new Set()) }} className="px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 hover:bg-gray-50">재생성</button>
+                    <button onClick={() => bulk({ deleted: true })} className="px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-red-500 hover:bg-red-50">휴지통</button>
+                  </>
+                )}
+                <button onClick={() => setSelected(new Set())} className="px-2 py-1.5 text-gray-400 hover:text-gray-600">선택 해제</button>
+              </div>
+            ) : visible.length > 0 && (
+              <button onClick={() => setSelected(new Set(visible.map(c => c.id)))} className="text-xs text-gray-400 hover:text-gray-600">전체 선택</button>
+            )}
+          </div>
+
+          {loadError && <p className="text-sm text-red-500 mb-4">{loadError}</p>}
+          {loading && <p className="text-sm text-gray-400">불러오는 중…</p>}
+          {!loading && course && visible.length === 0 && <p className="text-sm text-gray-400 py-10 text-center">해당하는 카드가 없어요.</p>}
+
+          {/* Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {visible.map(card => {
+              const img = currentImage(card)
+              const isBusy = busy.has(card.id)
+              const isSelected = selected.has(card.id)
+              return (
+                <div key={card.id} className={`bg-white rounded-xl border overflow-hidden flex flex-col ${isSelected ? 'border-teal-400 ring-2 ring-teal-200' : 'border-gray-200'}`}>
+                  <div className="relative aspect-square bg-gray-50 group">
+                    {img ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={img} alt={card.word.en} onClick={() => setLightbox(card.id)} className="w-full h-full object-contain cursor-zoom-in" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-xs text-gray-300 px-2 text-center">
+                        {card.error ? <span className="text-red-400">{card.error}</span> : '이미지 없음'}
+                      </div>
+                    )}
+                    {isBusy && (
+                      <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+                        <div className="w-7 h-7 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => setSelected(prev => { const s = new Set(prev); if (s.has(card.id)) s.delete(card.id); else s.add(card.id); return s })}
+                      className={`absolute top-2 left-2 w-4 h-4 accent-teal-500 ${isSelected ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                    />
+                    {card.versions.length > 1 && (
+                      <div className="absolute bottom-1.5 right-1.5 flex items-center bg-white/90 rounded-full text-[11px] text-gray-500 shadow-sm">
+                        <button disabled={card.current <= 0} onClick={() => update(card.id, { current: card.current - 1 })} className="px-1.5 py-0.5 disabled:opacity-30">‹</button>
+                        <span>{card.current + 1}/{card.versions.length}</span>
+                        <button disabled={card.current >= card.versions.length - 1} onClick={() => update(card.id, { current: card.current + 1 })} className="px-1.5 py-0.5 disabled:opacity-30">›</button>
+                      </div>
+                    )}
+                    <span className="absolute top-2 right-2 text-[10px] font-semibold text-gray-400 bg-white/80 rounded px-1">{card.word.type}</span>
+                  </div>
+
+                  <div className="px-3 pt-2 pb-1">
+                    <p className="text-sm font-semibold text-gray-900 truncate" title={card.word.en}>{card.word.en}</p>
+                    <p className="text-xs text-gray-500 truncate" title={card.word.ko}>{card.word.ko}{card.word.kr && <span className="text-gray-400"> · {card.word.kr}</span>}</p>
+                  </div>
+
+                  <div className="px-3 pb-3 mt-auto space-y-1.5">
+                    {card.deleted ? (
+                      <button onClick={() => update(card.id, { deleted: false })} className="w-full py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50">복원</button>
+                    ) : (
+                      <>
+                        <div className="flex gap-1">
+                          {QUICK_STATUSES.map(q => (
+                            <button
+                              key={q.status}
+                              disabled={!img}
+                              onClick={() => setStatus(card, q.status)}
+                              className={`flex-1 py-1 text-[11px] rounded-md border transition-colors disabled:opacity-30 ${
+                                card.status === q.status ? q.active : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                              }`}
+                            >
+                              {q.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-1 text-[11px] text-gray-400">
+                          <button onClick={() => setLightbox(card.id)} className={`flex-1 py-1 rounded-md hover:bg-gray-50 ${card.comment ? 'text-teal-600' : ''}`}>
+                            {card.comment ? '코멘트 ●' : '코멘트'}
+                          </button>
+                          <button disabled={isBusy} onClick={() => regenerate(card)} className="flex-1 py-1 rounded-md hover:bg-gray-50 disabled:opacity-40">재생성</button>
+                          <button disabled={!img} onClick={() => img && downloadUrl(img, fileName(card))} className="flex-1 py-1 rounded-md hover:bg-gray-50 disabled:opacity-40">다운</button>
+                          <button onClick={() => update(card.id, { deleted: true })} className="px-1.5 py-1 rounded-md hover:bg-red-50 hover:text-red-400" title="휴지통">✕</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      {lbCard && (
+        <Lightbox
+          card={lbCard}
+          busy={busy.has(lbCard.id)}
+          hasPrev={lbIndex > 0}
+          hasNext={lbIndex < visible.length - 1}
+          onPrev={() => setLightbox(visible[lbIndex - 1].id)}
+          onNext={() => setLightbox(visible[lbIndex + 1].id)}
+          onClose={() => setLightbox(null)}
+          onUpdate={(patch, debounce) => update(lbCard.id, patch, debounce)}
+          onStatus={s => setStatus(lbCard, s)}
+          onRegenerate={opts => regenerate(lbCard, opts)}
+        />
+      )}
+
+      {seriesOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setSeriesOpen(false)}>
+          <div className="bg-white rounded-2xl p-6 max-w-2xl w-full" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold text-gray-900">기준이 될 카드를 고르세요</h3>
+            <p className="text-sm text-gray-500 mt-1 mb-4">나머지 {selected.size - 1}개를 이 카드와 같은 틀로 다시 그려요. 단어에 맞춰 강조 부분만 바뀌어요.</p>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+              {selectedCards.filter(c => currentImage(c)).map(c => (
+                <button key={c.id} onClick={() => runSeries(c)} className="border border-gray-200 rounded-xl overflow-hidden hover:border-teal-400 hover:ring-2 hover:ring-teal-200">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={currentImage(c)!} alt={c.word.en} className="aspect-square object-contain bg-gray-50" />
+                  <p className="text-xs py-1.5 truncate px-1">{c.word.en}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  )
+}
+
+// ---------- lightbox ----------
+
+function Lightbox({ card, busy, hasPrev, hasNext, onPrev, onNext, onClose, onUpdate, onStatus, onRegenerate }: {
+  card: Card
+  busy: boolean
+  hasPrev: boolean
+  hasNext: boolean
+  onPrev: () => void
+  onNext: () => void
+  onClose: () => void
+  onUpdate: (patch: Partial<Card>, debounceMs?: number) => void
+  onStatus: (s: CardStatus) => void
+  onRegenerate: (opts?: GenerateOptions) => void
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [refImage, setRefImage] = useState<string | null>(null)
+  const [vectorizing, setVectorizing] = useState(false)
+  const img = currentImage(card)
+  const version = card.versions[card.current]
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).tagName === 'TEXTAREA') return
+      if (e.key === 'ArrowLeft' && hasPrev) onPrev()
+      if (e.key === 'ArrowRight' && hasNext) onNext()
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hasPrev, hasNext, onPrev, onNext, onClose])
+
+  const pickRef = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => setRefImage(ev.target?.result as string)
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
+  const downloadSVG = async () => {
     if (!img) return
-    setVectorizing(prev => new Set(prev).add(idx))
-    const filename = `${card.result.word.id}_${card.result.word.en.replace(/\s+/g, '_')}.png`
+    setVectorizing(true)
     try {
-      if (window.location.hostname === 'localhost') {
-        const res = await fetch('/api/local/save-pending', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: img, filename }),
-        })
-        if (res.ok) {
-          setPendingSaved(n => n + 1)
-          return
-        }
-      }
-      // 프로덕션 폴백: imagetracerjs
       const image = new Image()
+      image.crossOrigin = 'anonymous'
       image.src = img
       await new Promise<void>(resolve => { image.onload = () => resolve() })
       const canvas = document.createElement('canvas')
@@ -303,713 +566,129 @@ export default function ReviewPage() {
       canvas.height = image.height
       const ctx = canvas.getContext('2d')!
       ctx.drawImage(image, 0, 0)
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
       const ImageTracer = (await import('imagetracerjs')).default
-      const svgStr = ImageTracer.imagedataToSVG(imageData, {
-        numberofcolors: 16, pathomit: 4, blurradius: 0,
-        ltres: 1, qtres: 1, roundcoords: 2, viewbox: true, desc: false,
+      const svg = ImageTracer.imagedataToSVG(ctx.getImageData(0, 0, canvas.width, canvas.height), {
+        numberofcolors: 16, pathomit: 4, blurradius: 0, ltres: 1, qtres: 1, roundcoords: 2, viewbox: true, desc: false,
       })
-      const blob = new Blob([svgStr], { type: 'image/svg+xml' })
       const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = `${card.result.word.id}_${card.result.word.en.replace(/\s+/g, '_')}.svg`
+      a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
+      a.download = fileName(card, 'svg')
       a.click()
       URL.revokeObjectURL(a.href)
     } finally {
-      setVectorizing(prev => { const s = new Set(prev); s.delete(idx); return s })
+      setVectorizing(false)
     }
-  }
-
-  const openLightbox = (idx: number) => { setLightbox(idx); setLightboxComment(false) }
-  const closeLightbox = useCallback(() => { setLightbox(null); setLightboxComment(false) }, [])
-  const prevImage = useCallback(() => { setLightbox(prev => prev !== null ? Math.max(0, prev - 1) : null); setLightboxComment(false) }, [])
-  const nextImage = useCallback(() => { setLightbox(prev => prev !== null ? Math.min(cards.length - 1, prev + 1) : null); setLightboxComment(false) }, [cards.length])
-
-  useEffect(() => {
-    if (lightbox === null) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') prevImage()
-      if (e.key === 'ArrowRight') nextImage()
-      if (e.key === 'Escape') closeLightbox()
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [lightbox, prevImage, nextImage, closeLightbox])
-
-  const parseAddText = () => setAddWords(parseLines(addText))
-
-  const handleAddFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = ev => {
-      const text = ev.target?.result as string
-      setAddText(text.trim())
-      setAddWords(parseLines(text))
-    }
-    reader.readAsText(file)
-    e.target.value = ''
-  }
-
-  const updateAddType = (idx: number, type: Word['type']) => {
-    setAddWords(prev => prev.map((w, i) => i === idx ? { ...w, type } : w))
-  }
-
-  const generateAdd = async () => {
-    if (addWords.length === 0) return
-    setAddGenerating(true)
-    const currentCards = cards
-
-    // Auto-detect lang from words if addLang is empty
-    const detectedLang = detectCourseTag(addWords[0]?.en || '', addWords[0]?.ko || '')
-    const lang = (addLang.trim().toUpperCase()) || detectedLang
-
-    const duplicateIndices: number[] = []
-    const newWords: Word[] = []
-    for (const word of addWords) {
-      const existingIdx = currentCards.findIndex(
-        c => c.result.word.en.toLowerCase() === word.en.toLowerCase()
-      )
-      if (existingIdx !== -1) duplicateIndices.push(existingIdx)
-      else newWords.push(word)
-    }
-
-    if (lang && duplicateIndices.length > 0) {
-      setCards(prev => prev.map((c, i) =>
-        duplicateIndices.includes(i) && !c.langs.includes(lang)
-          ? { ...c, langs: [...c.langs, lang] }
-          : c
-      ))
-    }
-
-    setAddPanel(false)
-    setAddText('')
-    setAddWords([])
-
-    if (newWords.length === 0) { setAddGenerating(false); return }
-
-    const startIdx = currentCards.length
-    setCards(prev => [...prev, ...newWords.map(w => ({
-      result: { word: w, image: null, error: null },
-      status: 'pending' as Status, comment: '', regenerating: true, newImage: null, isNew: false,
-      langs: lang ? [lang] : [],
-    }))])
-
-    for (let i = 0; i < newWords.length; i++) {
-      try {
-        const r = await fetch('/api/generate-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ word: newWords[i], type: newWords[i].type }),
-        })
-        const data = await r.json()
-        setCards(prev => prev.map((c, ci) =>
-          ci === startIdx + i
-            ? { ...c, regenerating: false, isNew: true, result: { ...c.result, image: data.image || null, error: data.error || null } }
-            : c
-        ))
-      } catch {
-        setCards(prev => prev.map((c, ci) =>
-          ci === startIdx + i ? { ...c, regenerating: false, result: { ...c.result, error: '생성 실패' } } : c
-        ))
-      }
-    }
-    setAddGenerating(false)
-  }
-
-  // Derived data
-  const cardLangs = [...new Set(cards.flatMap(c => c.langs).filter(Boolean))]
-  const allLangs = [...new Set([...PRESET_LANGS, ...cardLangs])]
-
-  const langFilteredCards: { card: CardState; idx: number }[] =
-    selectedLang === 'all'
-      ? cards.map((card, idx) => ({ card, idx }))
-      : cards.map((card, idx) => ({ card, idx })).filter(({ card }) => card.langs.includes(selectedLang))
-
-  const filteredCards =
-    filter === 'all' ? langFilteredCards :
-    filter === 'approved' ? langFilteredCards.filter(({ card }) => card.status === 'approved') :
-    filter === 'pending' ? langFilteredCards.filter(({ card }) => card.status !== 'approved') :
-    langFilteredCards.filter(({ card }) => card.isNew)
-
-  const approvedCount = langFilteredCards.filter(({ card }) => card.status === 'approved').length
-  const pendingCount = langFilteredCards.filter(({ card }) => card.status === 'pending').length
-  const regeneratedCount = langFilteredCards.filter(({ card }) => card.isNew).length
-
-  const downloadApproved = () => {
-    langFilteredCards.filter(({ card }) => card.status === 'approved').forEach(({ card }) => downloadSingle(card))
-  }
-
-  const toggleSelect = (idx: number) => {
-    setSelectedCards(prev => { const s = new Set(prev); s.has(idx) ? s.delete(idx) : s.add(idx); return s })
-  }
-  const clearSelection = () => setSelectedCards(new Set())
-  const selectAll = () => setSelectedCards(new Set(filteredCards.map(({ idx }) => idx)))
-  const downloadSelected = () => {
-    filteredCards.filter(({ idx }) => selectedCards.has(idx)).forEach(({ card }) => downloadSingle(card))
-  }
-
-  const lbCard = lightbox !== null ? cards[lightbox] : null
-
-  const addWordDups = addWords.filter(w =>
-    cards.some(c => c.result.word.en.toLowerCase() === w.en.toLowerCase())
-  )
-  const addWordNew = addWords.filter(w =>
-    !cards.some(c => c.result.word.en.toLowerCase() === w.en.toLowerCase())
-  )
-
-  if (recovering) {
-    return (
-      <main className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="max-w-lg w-full mx-4">
-          <h2 className="text-xl font-bold text-gray-900 mb-1">저장된 데이터가 없어요</h2>
-          <p className="text-sm text-gray-500 mb-6">서버에 백업된 세션을 불러올 수 있어요.</p>
-
-          {sessions === null ? (
-            <p className="text-sm text-gray-400">세션 목록 불러오는 중...</p>
-          ) : sessions.length === 0 ? (
-            <div className="text-center py-8 text-gray-400 text-sm">
-              <p>서버에 저장된 세션이 없어요.</p>
-              <button onClick={() => router.push('/')} className="mt-4 text-teal-600 underline text-sm">
-                새로 생성하기
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {sessions.map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => restoreSession(s.id)}
-                  disabled={loadingSession}
-                  className="w-full text-left px-4 py-3 bg-white border border-gray-200 rounded-xl hover:border-teal-400 hover:bg-teal-50 transition-colors disabled:opacity-50"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-sm font-medium text-gray-800">
-                        {s.course || s.lang || '알 수 없는 코스'}
-                      </span>
-                      <span className="ml-2 text-xs text-gray-400">{s.count}개</span>
-                    </div>
-                    <span className="text-xs text-gray-400">
-                      {new Date(s.createdAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                </button>
-              ))}
-              <button onClick={() => router.push('/')} className="mt-2 text-sm text-gray-400 underline w-full text-center pt-2">
-                새로 생성하기
-              </button>
-            </div>
-          )}
-        </div>
-      </main>
-    )
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
-      <div className="max-w-5xl mx-auto px-6">
-
-        {/* pending-svg 저장 배너 */}
-        {pendingSaved > 0 && (
-          <div className="mt-6 flex items-center justify-between bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 text-sm text-teal-700">
-            <span>📁 {pendingSaved}개 PNG가 <code className="bg-teal-100 px-1 rounded">pending-svg/</code>에 저장됨 — Claude에게 SVG 변환을 요청하세요</span>
-            <button onClick={() => setPendingSaved(0)} className="text-teal-400 hover:text-teal-600 ml-4">✕</button>
-          </div>
-        )}
-
-        {/* 서버 백업 자동 동기화 배너 */}
-        {autoMergedCount > 0 && (
-          <div className="mt-6 flex items-center justify-between bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 text-sm text-teal-700">
-            <span>☁️ 서버에 백업된 이전 세션에서 {autoMergedCount}개 항목을 자동으로 불러왔어요</span>
-            <button onClick={() => setAutoMergedCount(0)} className="text-teal-400 hover:text-teal-600 ml-4">✕</button>
-          </div>
-        )}
-
-        {/* ① Header */}
-        <div className="pt-10 pb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">생성한 일러스트</h1>
-            <p className="mt-1 text-sm text-gray-500">
-              승인 {approvedCount} · 대기 {pendingCount} · 총 {langFilteredCards.length}개
-              {selectedLang !== 'all' && (
-                <span className="ml-2 px-1.5 py-0.5 bg-teal-50 text-teal-600 text-xs rounded font-medium">{selectedLang}</span>
-              )}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            {selectedCards.size > 0 && (
-              <button
-                onClick={downloadSelected}
-                className="px-5 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 transition-colors"
-              >
-                선택 다운로드 ({selectedCards.size})
-              </button>
-            )}
-            <button
-              onClick={() => {
-                setAddPanel(v => !v)
-                if (!addPanel && selectedLang !== 'all') setAddLang(selectedLang)
-              }}
-              className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
-            >
-              + 단어 추가 생성
-            </button>
-            <button
-              onClick={downloadApproved}
-              disabled={approvedCount === 0}
-              className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              승인 다운로드 ({approvedCount})
-            </button>
-          </div>
-        </div>
-
-        {/* ② Language tabs — always visible, page-level navigation */}
-        <div className="border-b border-gray-200">
-          <div className="flex">
-            <button
-              onClick={() => { setSelectedLang('all'); setFilter('all') }}
-              className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${
-                selectedLang === 'all'
-                  ? 'border-teal-500 text-teal-600'
-                  : 'border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-300'
-              }`}
-            >
-              All
-              <span className={`ml-2 text-xs font-normal tabular-nums ${selectedLang === 'all' ? 'text-teal-400' : 'text-gray-400'}`}>
-                {cards.length}
-              </span>
-            </button>
-            {allLangs.map(lang => (
-              <button
-                key={lang}
-                onClick={() => { setSelectedLang(lang); setFilter('all') }}
-                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${
-                  selectedLang === lang
-                    ? 'border-teal-500 text-teal-600'
-                    : 'border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-300'
-                }`}
-              >
-                {lang}
-                <span className={`ml-2 text-xs font-normal tabular-nums ${selectedLang === lang ? 'text-teal-400' : 'text-gray-400'}`}>
-                  {cards.filter(c => c.langs.includes(lang)).length}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="pt-6 pb-10">
-
-          {/* ③ Add panel */}
-          {addPanel && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-              <div className="mb-4 pb-4 border-b border-gray-100">
-                <label className="text-xs font-medium text-gray-600 block mb-2">언어 선택</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {PRESET_LANGS.map(tag => (
-                    <button
-                      key={tag}
-                      onClick={() => setAddLang(addLang === tag ? '' : tag)}
-                      className={`px-3 py-1 text-xs font-semibold rounded-full border transition-colors ${
-                        addLang === tag
-                          ? 'bg-teal-500 text-white border-teal-500'
-                          : 'bg-white text-gray-500 border-gray-200 hover:border-teal-400 hover:text-teal-600'
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                  <input
-                    value={PRESET_LANGS.includes(addLang) ? '' : addLang}
-                    onChange={e => setAddLang(e.target.value.toUpperCase())}
-                    placeholder="직접 입력"
-                    maxLength={6}
-                    className="w-20 border border-gray-200 rounded-full px-2.5 py-1 text-xs text-gray-900 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="font-semibold text-gray-900 text-sm">단어 추가 생성</h3>
-                <button onClick={() => fileRef.current?.click()} className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                  파일 업로드 (CSV / TXT)
-                </button>
-                <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleAddFile} />
-              </div>
-              <p className="text-xs text-gray-400 mb-3">
-                형식: <code className="bg-gray-100 px-1 rounded">학습어 | 모국어</code> 또는 <code className="bg-gray-100 px-1 rounded">학습어/모국어</code>
-              </p>
-              <textarea
-                value={addText}
-                onChange={e => setAddText(e.target.value)}
-                placeholder={`사과/apple\n티셔츠 | T-shirt`}
-                rows={4}
-                className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none mb-3"
-              />
-              {addWords.length === 0 ? (
-                <button
-                  onClick={parseAddText}
-                  disabled={!addText.trim()}
-                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-40 transition-colors"
-                >
-                  단어 확인
-                </button>
-              ) : (
-                <>
-                  <div className="space-y-1 mb-3">
-                    {addWords.map((w, i) => {
-                      const isDup = cards.some(c => c.result.word.en.toLowerCase() === w.en.toLowerCase())
-                      return (
-                        <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
-                          <span className="font-medium text-sm text-gray-900 w-32 shrink-0">{w.en}</span>
-                          <span className="text-sm text-gray-400 w-20 shrink-0">{w.ko}</span>
-                          {isDup ? (
-                            <span className="ml-auto text-xs px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full border border-amber-200">태그 추가</span>
-                          ) : (
-                            <select
-                              value={w.type}
-                              onChange={e => updateAddType(i, e.target.value as Word['type'])}
-                              className="ml-auto text-xs border border-gray-200 rounded-md px-2 py-1 text-gray-600 focus:outline-none"
-                            >
-                              {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                            </select>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                  {addWordDups.length > 0 && (
-                    <p className="text-xs text-amber-600 mb-2">
-                      {addWordDups.length}개는 이미 존재 — 언어 태그만 추가됩니다.
-                      {addWordNew.length > 0 && ` ${addWordNew.length}개 신규 생성.`}
-                    </p>
-                  )}
-                  <div className="flex gap-2">
-                    <button onClick={() => setAddWords([])} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors">
-                      다시 입력
-                    </button>
-                    <button
-                      onClick={generateAdd}
-                      disabled={addGenerating}
-                      className="flex-1 py-2 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 disabled:opacity-40 transition-colors"
-                    >
-                      {addGenerating ? '생성 중...' : (
-                        addWordNew.length > 0
-                          ? `일러스트 생성 (${addWordNew.length}개)${addWordDups.length > 0 ? ` + 태그 추가 (${addWordDups.length}개)` : ''}`
-                          : `태그 추가 (${addWordDups.length}개)`
-                      )}
-                    </button>
-                  </div>
-                </>
-              )}
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl overflow-hidden max-w-4xl w-full max-h-[92vh] flex flex-col md:flex-row" onClick={e => e.stopPropagation()}>
+        <div className="relative md:w-[58%] bg-gray-50 aspect-square shrink-0">
+          {img
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={img} alt={card.word.en} className="w-full h-full object-contain" />
+            : <div className="w-full h-full flex items-center justify-center text-gray-300">이미지 없음</div>}
+          {busy && (
+            <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+              <div className="w-9 h-9 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
             </div>
           )}
-
-          {/* ④ Status filter tabs + selection controls */}
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-              {([
-                ['all', '전체', langFilteredCards.length],
-                ['approved', '승인됨', approvedCount],
-                ['pending', '승인전', langFilteredCards.filter(({ card }) => card.status !== 'approved').length],
-                ['regenerated', '재생성', regeneratedCount],
-              ] as [FilterType, string, number][]).map(([key, label, count]) => (
-                <button
-                  key={key}
-                  onClick={() => setFilter(key)}
-                  className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                    filter === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {label}
-                  {count > 0 && <span className="ml-1.5 text-xs tabular-nums text-gray-400">{count}</span>}
-                </button>
-              ))}
+          {hasPrev && <button onClick={onPrev} className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 rounded-full shadow text-gray-700">‹</button>}
+          {hasNext && <button onClick={onNext} className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 rounded-full shadow text-gray-700">›</button>}
+          {card.versions.length > 1 && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-white/90 rounded-full shadow px-2 py-1 text-xs text-gray-600">
+              <button disabled={card.current <= 0} onClick={() => onUpdate({ current: card.current - 1 })} className="px-1.5 disabled:opacity-30">‹</button>
+              <span>버전 {card.current + 1} / {card.versions.length}</span>
+              <button disabled={card.current >= card.versions.length - 1} onClick={() => onUpdate({ current: card.current + 1 })} className="px-1.5 disabled:opacity-30">›</button>
             </div>
-            <div className="flex items-center gap-3">
-              {selectedCards.size > 0 && (
-                <span className="text-sm text-teal-600 font-medium">{selectedCards.size}개 선택됨</span>
-              )}
+          )}
+        </div>
+
+        <div className="flex-1 p-5 overflow-y-auto space-y-4 text-sm">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-xs text-gray-400">{card.id}</p>
+              <h3 className="text-lg font-bold text-gray-900">{card.word.en}</h3>
+              <p className="text-gray-500">{card.word.ko}{card.word.kr && <span className="text-gray-400"> · {card.word.kr}</span>}</p>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+
+          {version?.feedback && <p className="text-xs text-gray-400">이 버전 생성 시 코멘트: {version.feedback}</p>}
+
+          <div className="flex flex-wrap gap-1.5">
+            {QUICK_STATUSES.map(q => (
               <button
-                onClick={selectedCards.size > 0 ? clearSelection : selectAll}
-                className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
+                key={q.status}
+                disabled={!img}
+                onClick={() => onStatus(q.status)}
+                className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-30 ${card.status === q.status ? q.active : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}`}
               >
-                {selectedCards.size > 0 ? '선택 해제' : '전체 선택'}
+                {q.label}
               </button>
+            ))}
+            <span className="text-xs text-gray-400 self-center ml-1">{STATUS_LABELS[card.status]}</span>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-500 block mb-1">타입</label>
+            <select
+              value={card.word.type}
+              onChange={e => onUpdate({ word: { ...card.word, type: e.target.value as Word['type'] } })}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700"
+            >
+              {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-500 block mb-1">코멘트 (재생성 시 반영)</label>
+            <textarea
+              value={card.comment}
+              onChange={e => onUpdate({ comment: e.target.value }, 700)}
+              rows={3}
+              placeholder="예: 사람 없이 컵만, 색을 더 따뜻하게"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <button onClick={() => fileRef.current?.click()} className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+                {refImage ? '레퍼런스 이미지 변경' : '+ 레퍼런스 이미지 (선택)'}
+              </button>
+              {refImage && <button onClick={() => setRefImage(null)} className="text-xs text-gray-400">빼기</button>}
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pickRef} />
             </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {refImage && <img src={refImage} alt="reference" className="w-20 h-20 object-contain border border-gray-200 rounded-lg" />}
+            <button
+              disabled={busy}
+              onClick={() => { onRegenerate(refImage ? { referenceImage: refImage } : {}); setRefImage(null) }}
+              className="w-full py-2.5 bg-teal-500 text-white rounded-lg font-medium hover:bg-teal-600 disabled:opacity-40"
+            >
+              {busy ? '생성 중…' : card.comment ? '코멘트 반영해서 재생성' : '재생성'}
+            </button>
+            <p className="text-xs text-gray-400">재생성해도 이전 버전은 남아요. 이미지 아래 ‹ › 로 되돌릴 수 있어요.</p>
           </div>
 
-          {/* ⑤ Cards grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {filteredCards.map(({ card, idx }) => {
-              const img = card.newImage || card.result.image
-              return (
-                <div
-                  key={card.result.word.id}
-                  className={`bg-white rounded-xl border-2 overflow-hidden transition-colors ${
-                    card.status === 'approved' ? 'border-teal-400' :
-                    card.status === 'rejected' ? 'border-red-300' : 'border-gray-200'
-                  }`}
-                >
-                  <div className="px-3 pt-2 pb-1 flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={selectedCards.has(idx)}
-                      onChange={() => toggleSelect(idx)}
-                      className="w-3.5 h-3.5 rounded accent-teal-500 cursor-pointer shrink-0"
-                    />
-                    {card.isNew && !card.regenerating && (
-                      <span className="text-xs bg-orange-400 text-white px-1.5 py-0.5 rounded-full font-semibold leading-none">NEW</span>
-                    )}
-                  </div>
-                  <div
-                    className="aspect-square bg-gray-50 relative cursor-pointer group"
-                    onClick={() => img && openLightbox(idx)}
-                  >
-                    {card.regenerating ? (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <div className="w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
-                      </div>
-                    ) : img ? (
-                      <>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={img} alt={card.result.word.en} className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                          <span className="opacity-0 group-hover:opacity-100 text-white text-xs bg-black/40 px-2 py-1 rounded-full transition-opacity">미리보기</span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-xs text-red-400">생성 실패</div>
-                    )}
-
-                    {card.status === 'approved' && (
-                      <div className="absolute top-2 right-2 bg-teal-500 text-white text-xs px-2 py-0.5 rounded-full">승인</div>
-                    )}
-                    {card.langs.length > 0 && (
-                      <div className="absolute bottom-2 left-2 flex gap-1 flex-wrap">
-                        {card.langs.map(l => (
-                          <span key={l} className="text-xs px-1.5 py-0.5 bg-black/30 text-white rounded backdrop-blur-sm">{l}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="p-3">
-                    <p className="text-xs font-semibold text-gray-900 mb-0.5">{card.result.word.en}</p>
-                    <p className="text-xs text-gray-400 mb-3">{card.result.word.ko}</p>
-
-                    <div className="flex gap-1.5 mb-2">
-                      <button
-                        onClick={() => setStatus(idx, card.status === 'approved' ? 'pending' : 'approved')}
-                        className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                          card.status === 'approved'
-                            ? 'bg-teal-500 text-white'
-                            : 'bg-gray-100 text-gray-600 hover:bg-teal-50 hover:text-teal-600'
-                        }`}
-                      >
-                        {card.status === 'approved' ? '✓ 승인됨' : '승인'}
-                      </button>
-                      <button
-                        onClick={() => setExpandedComment(expandedComment === idx ? null : idx)}
-                        className="flex-1 py-1.5 bg-gray-100 text-gray-600 rounded-md text-xs font-medium hover:bg-orange-50 hover:text-orange-500 transition-colors"
-                      >
-                        재생성
-                      </button>
-                      <button
-                        onClick={() => downloadSingle(card)}
-                        disabled={!(card.newImage || card.result.image)}
-                        title="PNG 저장"
-                        className="w-7 py-1.5 bg-gray-100 text-gray-500 rounded-md text-xs font-medium hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
-                      >
-                        ↓
-                      </button>
-                      <button
-                        onClick={() => downloadSVG(card, idx)}
-                        disabled={!(card.newImage || card.result.image) || vectorizing.has(idx)}
-                        title="SVG 변환 후 저장"
-                        className="w-9 py-1.5 bg-gray-100 text-gray-500 rounded-md text-xs font-medium hover:bg-purple-50 hover:text-purple-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
-                      >
-                        {vectorizing.has(idx) ? (
-                          <span className="inline-block w-3 h-3 border border-purple-400 border-t-transparent rounded-full animate-spin" />
-                        ) : 'SVG'}
-                      </button>
-                      <button
-                        onClick={() => deleteCard(idx)}
-                        title="삭제"
-                        className="w-7 py-1.5 bg-gray-100 text-gray-400 rounded-md text-xs font-medium hover:bg-red-50 hover:text-red-400 transition-colors flex items-center justify-center"
-                      >
-                        ✕
-                      </button>
-                    </div>
-
-                    {expandedComment === idx && (
-                      <div className="mt-1">
-                        <textarea
-                          value={card.comment}
-                          onChange={e => setComment(idx, e.target.value)}
-                          placeholder="수정 요청 사항 (선택)&#10;예: 배경 색상 변경, 크기 조정"
-                          rows={2}
-                          className="w-full text-xs text-gray-900 border border-gray-200 rounded-md px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-orange-300 mb-1.5"
-                        />
-                        <label className="flex items-center gap-1.5 cursor-pointer mb-1.5">
-                          <input
-                            type="file" accept="image/*" className="hidden"
-                            onChange={async e => {
-                              const file = e.target.files?.[0]
-                              if (file) {
-                                const b64 = await readFileAsBase64(file)
-                                setRefImages(prev => ({ ...prev, [idx]: b64 }))
-                              }
-                              e.target.value = ''
-                            }}
-                          />
-                          <span className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                            {refImages[idx] ? '✓ 레퍼런스 첨부됨' : '+ 레퍼런스 이미지'}
-                          </span>
-                          {refImages[idx] && (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={refImages[idx]} alt="" className="w-8 h-8 rounded object-cover" />
-                          )}
-                        </label>
-                        <button
-                          onClick={() => { regenerate(idx, refImages[idx]); setExpandedComment(null) }}
-                          className="w-full py-1.5 bg-orange-400 text-white rounded-md text-xs font-medium hover:bg-orange-500 transition-colors"
-                        >
-                          다시 생성
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+          <div className="flex gap-2 pt-2 border-t border-gray-100">
+            <button disabled={!img} onClick={() => img && downloadUrl(img, fileName(card))} className="flex-1 py-2 text-xs rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">PNG 다운로드</button>
+            <button disabled={!img || vectorizing} onClick={downloadSVG} className="flex-1 py-2 text-xs rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">{vectorizing ? '변환 중…' : 'SVG 다운로드'}</button>
+            <button onClick={() => { onUpdate({ deleted: !card.deleted }); if (!card.deleted) onClose() }} className="px-3 py-2 text-xs rounded-lg border border-gray-200 text-red-500 hover:bg-red-50">
+              {card.deleted ? '복원' : '휴지통'}
+            </button>
           </div>
-
         </div>
       </div>
+    </div>
+  )
+}
 
-      {/* Lightbox */}
-      {lightbox !== null && lbCard && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center" onClick={closeLightbox}>
-          <div
-            className="relative bg-white rounded-2xl overflow-hidden shadow-2xl flex flex-col"
-            style={{ width: 520, maxWidth: '95vw' }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="relative bg-gray-50 aspect-square">
-              {lbCard.regenerating ? (
-                <div className="w-full h-full flex items-center justify-center">
-                  <div className="w-10 h-10 border-4 border-teal-500 border-t-transparent rounded-full animate-spin" />
-                </div>
-              ) : (lbCard.newImage || lbCard.result.image) ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={lbCard.newImage || lbCard.result.image!} alt={lbCard.result.word.en} className="w-full h-full object-contain" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-red-400">생성 실패</div>
-              )}
-
-              {lightbox > 0 && (
-                <button onClick={prevImage} className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-700 text-lg">‹</button>
-              )}
-              {lightbox < cards.length - 1 && (
-                <button onClick={nextImage} className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-700 text-lg">›</button>
-              )}
-              <button onClick={closeLightbox} className="absolute top-3 right-3 w-8 h-8 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow text-gray-500 text-sm">✕</button>
-
-              {lbCard.status === 'approved' && (
-                <div className="absolute top-3 left-3 bg-teal-500 text-white text-xs px-2.5 py-1 rounded-full">승인</div>
-              )}
-              {lbCard.isNew && !lbCard.regenerating && (
-                <div className="absolute top-3 left-3 bg-orange-400 text-white text-xs px-2.5 py-1 rounded-full font-semibold">NEW</div>
-              )}
-              {lbCard.langs.length > 0 && (
-                <div className="absolute bottom-3 left-3 flex gap-1.5 flex-wrap">
-                  {lbCard.langs.map(l => (
-                    <span key={l} className="text-xs px-2 py-0.5 bg-black/30 text-white rounded-full backdrop-blur-sm font-medium">{l}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="font-semibold text-gray-900">{lbCard.result.word.en}</p>
-                  <p className="text-sm text-gray-400">{lbCard.result.word.ko}</p>
-                </div>
-                <p className="text-xs text-gray-300">{lightbox + 1} / {cards.length}</p>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setStatus(lightbox, lbCard.status === 'approved' ? 'pending' : 'approved')}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                    lbCard.status === 'approved' ? 'bg-teal-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-teal-50 hover:text-teal-600'
-                  }`}
-                >
-                  {lbCard.status === 'approved' ? '✓ 승인됨' : '승인'}
-                </button>
-                <button
-                  onClick={() => setLightboxComment(v => !v)}
-                  className="flex-1 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-sm font-medium hover:bg-orange-50 hover:text-orange-500 transition-colors"
-                >
-                  재생성
-                </button>
-                <button
-                  onClick={() => downloadSingle(lbCard)}
-                  disabled={!(lbCard.newImage || lbCard.result.image)}
-                  className="px-4 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-200 disabled:opacity-30 transition-colors"
-                >
-                  ↓ 저장
-                </button>
-                <button
-                  onClick={() => deleteCard(lightbox)}
-                  className="px-4 py-2.5 bg-gray-100 text-gray-400 rounded-xl text-sm font-medium hover:bg-red-50 hover:text-red-400 transition-colors"
-                >
-                  삭제
-                </button>
-              </div>
-
-              {lightboxComment && (
-                <div className="mt-3">
-                  <textarea
-                    value={lbCard.comment}
-                    onChange={e => setComment(lightbox, e.target.value)}
-                    placeholder="수정 요청 사항 (선택)"
-                    rows={2}
-                    className="w-full text-sm text-gray-900 border border-gray-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-orange-300 mb-2"
-                  />
-                  <label className="flex items-center gap-2 cursor-pointer mb-2">
-                    <input
-                      type="file" accept="image/*" className="hidden"
-                      onChange={async e => {
-                        const file = e.target.files?.[0]
-                        if (file) readFileAsBase64(file).then(setLbRefImage)
-                        e.target.value = ''
-                      }}
-                    />
-                    <span className="text-sm text-teal-600 hover:text-teal-700 font-medium">
-                      {lbRefImage ? '✓ 레퍼런스 첨부됨' : '+ 레퍼런스 이미지'}
-                    </span>
-                    {lbRefImage && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={lbRefImage} alt="" className="w-10 h-10 rounded object-cover" />
-                    )}
-                  </label>
-                  <button
-                    onClick={() => regenerate(lightbox, lbRefImage ?? undefined)}
-                    className="w-full py-2.5 bg-orange-400 text-white rounded-xl text-sm font-medium hover:bg-orange-500 transition-colors"
-                  >
-                    다시 생성
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </main>
+export default function ReviewPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-400">로딩 중...</div>}>
+      <ReviewContent />
+    </Suspense>
   )
 }

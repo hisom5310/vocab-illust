@@ -19,7 +19,7 @@ export default function NavBar() {
               : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
           }`}
         >
-          생성하기
+          새로 만들기
         </Link>
         <Link
           href="/review"

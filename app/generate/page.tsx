@@ -1,245 +1,137 @@
 'use client'
 
-import { useState, useEffect, useRef, Suspense } from 'react'
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { idbSet, idbGet } from '../lib/storage'
+import { fetchCourse, generateForCard } from '../lib/client'
+import { currentImage, type Card } from '../lib/types'
 
-type Word = { id: string; en: string; ko: string; type: 'A' | 'B' | 'C' | 'D' }
-type Result = { word: Word; image: string | null; error: string | null; lang?: string }
-type CardStatus = { id: string; status: string; comment: string }
-
-// Results are merged into IDB by word.id, so a shared id (e.g. a sheet's 관리코드 like
-// EEV1701 used for every word in that set) makes later words overwrite earlier ones.
-// Suffix repeats with a/b/c… to keep every word's card.
-function withUniqueIds(words: Word[]): Word[] {
-  const counts = new Map<string, number>()
-  for (const w of words) counts.set(w.id, (counts.get(w.id) ?? 0) + 1)
-  const seen = new Map<string, number>()
-  return words.map(w => {
-    if ((counts.get(w.id) ?? 0) < 2) return w
-    const n = seen.get(w.id) ?? 0
-    seen.set(w.id, n + 1)
-    return { ...w, id: `${w.id}${String.fromCharCode(97 + n)}` }
-  })
-}
-
-// Merge finished results into IDB right away, so closing the tab mid-batch
-// keeps everything generated so far.
-async function persistResults(done: Result[]) {
-  const mergedResults = await idbGet<Result[]>('vocab-results') ?? []
-  const mergedStatuses = await idbGet<CardStatus[]>('vocab-card-statuses') ?? []
-  for (const r of done) {
-    const idx = mergedResults.findIndex(e => e.word.id === r.word.id)
-    if (idx >= 0) {
-      mergedResults[idx] = r
-    } else {
-      mergedResults.push(r)
-      if (!mergedStatuses.find(s => s.id === r.word.id)) {
-        mergedStatuses.push({ id: r.word.id, status: 'pending', comment: '' })
-      }
-    }
-  }
-  await idbSet('vocab-results', mergedResults)
-  await idbSet('vocab-card-statuses', mergedStatuses)
-  return mergedStatuses
-}
+// Two at a time: roughly halves a 24-word batch without tripping OpenAI rate limits.
+const CONCURRENCY = 2
 
 function GenerateContent() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const [words, setWords] = useState<Word[]>([])
-  const [results, setResults] = useState<Result[]>([])
-  const [current, setCurrent] = useState(-1)
-  const [done, setDone] = useState(false)
-  const [courseLabel, setCourseLabel] = useState('')
+  const course = useSearchParams().get('course') ?? ''
+  const [cards, setCards] = useState<Card[]>([])
+  const [active, setActive] = useState<Set<string>>(new Set())
+  const [running, setRunning] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const started = useRef(false)
 
-  useEffect(() => {
-    const queueParam = searchParams.get('queue')
-
-    if (queueParam) {
-      // Claude API route path: /generate?queue=BASE64
-      try {
-        const b64 = queueParam.replace(/-/g, '+').replace(/_/g, '/')
-        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-        const decoded = JSON.parse(new TextDecoder().decode(bytes)) as {
-          words: Word[]
-          lang: string
-          course: string
-        }
-        const { lang, course } = decoded
-        const w = withUniqueIds(decoded.words ?? [])
-        if (!w?.length) { router.push('/'); return }
-        if (course) setCourseLabel(course)
-        setWords(w)
-        setResults(w.map(word => ({ word, image: null, error: null, lang })))
-        idbSet('vocab-words', w)
-        idbSet('vocab-lang', lang)
-        idbSet('vocab-course', course)
-        if (!started.current) {
-          started.current = true
-          generateAll(w, lang)
-        }
-      } catch {
-        router.push('/')
+  const run = useCallback(async (all: Card[], targets: Card[]) => {
+    setRunning(true)
+    const unitWords = all.filter(c => !c.deleted).map(c => c.word.en)
+    const queue = [...targets]
+    const worker = async () => {
+      for (let card = queue.shift(); card; card = queue.shift()) {
+        const id = card.id
+        setActive(prev => new Set(prev).add(id))
+        const updated = await generateForCard(card, { unitWords })
+        setCards(prev => prev.map(c => c.id === id ? updated : c))
+        setActive(prev => { const s = new Set(prev); s.delete(id); return s })
       }
-      return
     }
-
-    // Normal flow: read from IDB
-    Promise.all([
-      idbGet<Word[]>('vocab-words'),
-      idbGet<string>('vocab-lang'),
-      idbGet<string>('vocab-course'),
-    ]).then(([stored, l, c]) => {
-      if (!stored) { router.push('/'); return }
-      const w = withUniqueIds(stored)
-      const lang = l || ''
-      if (c) setCourseLabel(c)
-      setWords(w)
-      setResults(w.map(word => ({ word, image: null, error: null, lang })))
-      if (!started.current) {
-        started.current = true
-        generateAll(w, lang)
-      }
-    })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker))
+    setRunning(false)
   }, [])
 
-  const generateAll = async (wordList: Word[], lang: string) => {
-    const res: Result[] = wordList.map(w => ({ word: w, image: null, error: null, lang }))
-    for (let i = 0; i < wordList.length; i++) {
-      setCurrent(i)
-      const word = wordList[i]
-      try {
-        const r = await fetch('/api/generate-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ word, type: word.type }),
-        })
-        const data = await r.json()
-        res[i] = { word, image: data.image || null, error: data.error || null, lang }
-      } catch {
-        res[i] = { word, image: null, error: '생성 실패', lang }
-      }
-      setResults([...res])
-      await persistResults([res[i]])
-    }
-    setCurrent(-1)
-    setDone(true)
+  useEffect(() => {
+    if (!course || started.current) return
+    started.current = true
+    fetchCourse(course)
+      .then(loaded => {
+        setCards(loaded)
+        const todo = loaded.filter(c => !c.deleted && c.status === 'queued' && !c.error)
+        if (todo.length) run(loaded, todo)
+      })
+      .catch(e => setLoadError(e instanceof Error ? e.message : '불러오기 실패'))
+  }, [course, run])
 
-    const mergedStatuses = await persistResults(res)
+  const live = cards.filter(c => !c.deleted)
+  const waiting = live.filter(c => c.status === 'queued')
+  const failed = waiting.filter(c => c.error && !active.has(c.id))
+  const doneCount = live.length - waiting.length
+  const finished = !running && cards.length > 0 && waiting.length === 0
 
-    // Background save to server (non-blocking).
-    // Only this batch's new items (`res`) are sent, chunked, appending to a persisted
-    // session id — sending the full accumulated history every time would eventually
-    // exceed the platform's request-size limit and fail silently.
-    ;(async () => {
-      const [savedLang, savedCourse, storedSessionId] = await Promise.all([
-        idbGet<string>('vocab-lang'),
-        idbGet<string>('vocab-course'),
-        idbGet<string>('vocab-server-session-id'),
-      ])
-      let serverSessionId = storedSessionId ?? undefined
-      const CHUNK_SIZE = 8
-      for (let i = 0; i < res.length; i += CHUNK_SIZE) {
-        const chunk = res.slice(i, i + CHUNK_SIZE)
-        try {
-          const r = await fetch('/api/storage/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              results: chunk,
-              statuses: mergedStatuses,
-              lang: savedLang ?? '',
-              course: savedCourse ?? '',
-              sessionId: serverSessionId,
-            }),
-          })
-          const data = await r.json()
-          if (data.sessionId) {
-            const sid: string = data.sessionId
-            serverSessionId = sid
-            await idbSet('vocab-server-session-id', sid)
-            localStorage.setItem('vocab-last-session', sid)
-          } else if (data.error) {
-            console.error('server backup chunk failed:', data.error)
-          }
-        } catch (e) {
-          console.error('server backup chunk failed:', e)
-        }
-      }
-    })()
+  useEffect(() => {
+    if (finished) router.push(`/review?course=${encodeURIComponent(course)}`)
+  }, [finished, course, router])
 
-    router.push('/review')
+  if (!course) {
+    return <p className="p-10 text-gray-500">코스가 지정되지 않았어요.</p>
   }
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-6 py-10">
-        <div className="mb-8">
-          <button
-            onClick={() => router.push('/')}
-            className="mb-4 text-sm text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1"
-          >
-            ← 단어 목록으로
-          </button>
-          <h1 className="text-2xl font-bold text-gray-900">일러스트 생성 중</h1>
-          {courseLabel && <p className="mt-1 text-teal-600 font-medium text-sm">{courseLabel}</p>}
-          {!done && current >= 0 && (
-            <p className="mt-1 text-gray-500 text-sm">
-              {current + 1} / {words.length} 생성 중... ({words[current]?.en})
+      <div className="max-w-5xl mx-auto px-6 py-10">
+        <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
+          <div>
+            <p className="text-teal-600 font-medium text-sm">{course}</p>
+            <h1 className="text-2xl font-bold text-gray-900">일러스트 생성</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              {running
+                ? '완성된 이미지는 바로 저장돼요. 이 탭이 열려 있는 동안 계속 생성하고, 닫았다가 다시 열면 남은 단어부터 이어서 만들어요.'
+                : failed.length
+                  ? `${failed.length}개가 실패했어요.`
+                  : '불러오는 중…'}
             </p>
-          )}
-          {done && <p className="mt-1 text-teal-600 font-medium">완료! 검토 페이지로 이동하세요.</p>}
+          </div>
+          <div className="flex gap-2">
+            {failed.length > 0 && !running && (
+              <button
+                onClick={() => run(cards, failed.map(c => ({ ...c, error: null })))}
+                className="px-4 py-2 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600"
+              >
+                실패한 {failed.length}개 다시 시도
+              </button>
+            )}
+            <button
+              onClick={() => router.push(`/review?course=${encodeURIComponent(course)}`)}
+              className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50"
+            >
+              검토 화면으로
+            </button>
+          </div>
         </div>
 
-        {/* Progress bar */}
-        {words.length > 0 && (
+        {loadError && <p className="mb-4 text-sm text-red-500">{loadError}</p>}
+
+        {live.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
             <div className="flex justify-between text-xs text-gray-500 mb-2">
               <span>진행률</span>
-              <span>{results.filter(r => r.image || r.error).length} / {words.length}</span>
+              <span>{doneCount} / {live.length}</span>
             </div>
             <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-teal-500 rounded-full transition-all duration-500"
-                style={{ width: `${(results.filter(r => r.image || r.error).length / words.length) * 100}%` }}
-              />
+              <div className="h-full bg-teal-500 rounded-full transition-all duration-500" style={{ width: `${(doneCount / live.length) * 100}%` }} />
             </div>
           </div>
         )}
 
-        {/* Cards grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-6">
-          {results.map((res, i) => (
-            <div
-              key={res.word.id}
-              className="bg-white rounded-xl border border-gray-200 overflow-hidden"
-            >
-              <div className="aspect-square bg-gray-50 flex items-center justify-center relative">
-                {res.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={res.image} alt={res.word.en} className="w-full h-full object-cover" />
-                ) : res.error ? (
-                  <span className="text-xs text-red-400 text-center px-2">{res.error}</span>
-                ) : current === i ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs text-gray-400">생성 중</span>
-                  </div>
-                ) : (
-                  <span className="text-xs text-gray-300">대기 중</span>
-                )}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {live.map(card => {
+            const img = currentImage(card)
+            return (
+              <div key={card.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="aspect-square bg-gray-50 flex items-center justify-center">
+                  {img ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={img} alt={card.word.en} className="w-full h-full object-contain" />
+                  ) : active.has(card.id) ? (
+                    <div className="w-7 h-7 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
+                  ) : card.error ? (
+                    <p className="text-xs text-red-400 px-2 text-center">{card.error}</p>
+                  ) : (
+                    <p className="text-xs text-gray-300">대기 중</p>
+                  )}
+                </div>
+                <div className="px-2.5 py-2">
+                  <p className="text-sm font-medium text-gray-900 truncate">{card.word.en}</p>
+                  <p className="text-xs text-gray-400 truncate">{card.word.ko}</p>
+                </div>
               </div>
-              <div className="p-2.5">
-                <p className="text-xs font-medium text-gray-900 truncate">{res.word.en}</p>
-                <p className="text-xs text-gray-400 truncate">{res.word.ko}</p>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
-
       </div>
     </main>
   )
