@@ -1,5 +1,4 @@
 import sharp from 'sharp'
-import { flattenGradients } from './flatten'
 
 // Requesting background:'transparent' directly from the model causes it to treat
 // any near-white foreground content (white coats, white collars, etc.) as background
@@ -185,8 +184,8 @@ async function whitenUniformBackdrop(png: Buffer): Promise<Buffer> {
 }
 
 // Raw model output (opaque, white background) → final transparent card image.
+// flattenGradients (./flatten.ts) / fitToCanvas are on hold: with the 2026-10 prompt experiment the
+// results looked over-worked, so quality work is paused and only the backdrop fix stays.
 export async function postprocess(raw: Buffer): Promise<Buffer> {
-  const flat = await flattenGradients(await whitenUniformBackdrop(raw))
-  const transparent = await removeWhiteBackground(flat)
-  return fitToCanvas(transparent)
+  return removeWhiteBackground(await whitenUniformBackdrop(raw))
 }

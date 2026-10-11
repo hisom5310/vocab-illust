@@ -39,17 +39,17 @@ TEUIDA 보캡 일러스트 일괄 생성 웹툴. 단어 목록을 입력하면 O
 - 12색 팔레트 (route.ts STYLE_BASE에 전체 hex 명시됨)
 - 단어 유형: Type A(사물), B(직업), C(동사/감정), D(자연/계절)
 
-**꾸밈 요소 규칙** (2026-10 업데이트, Figma ESEN Unit 16 최종본 기준):
-- 단어를 분명하게 하거나 같은 세트의 비슷한 단어와 구분해 주는 소품 1~3개 추가 (장소→나무·구름, 배→갈매기, 숙소 종류→구분 요소)
-- 같은 세트 안에서 사물만으로 구분이 확실할 때만 생략
-- 글자 자리는 빈 칸 (글자는 디자이너가 Figma에서 입력), 손은 필요할 때만 — 상세는 auto memory `illustration-style-decisions`
+**꾸밈 요소 규칙** (2025-05 업데이트):
+- 의미 강화할 때만 추가 (party→색종이, music→음표)
+- 의류·음식·색상 등 실루엣으로 충분한 경우 생략
+- 2026-10 Figma 기반 프롬프트 개편(소품·문화 맥락·새 레퍼런스)은 "너무 구체화됨" 피드백으로 되돌림, 퀄리티 작업 보류 중 (커밋 84dec93 참고)
 
 ## 주요 API
 
 - `POST /api/queue` — body `{ course: "ESEN Unit 17", words: [{ id, en, ko, kr?, type }] }` → 카드를 queued로 만들고 `{ url: /generate?course=... }` 반환. 이미 있는 id는 건너뜀
-- `POST /api/generate-image` — body `{ word, type, course?, unitWords?, feedback?, referenceImage?, series?, store?: { course, cardId } }`
+- `POST /api/generate-image` — body `{ word, type, feedback?, referenceImage?, series?, store?: { course, cardId } }`
   - store 있으면 Blob에 저장하고 `{ imageUrl }`, 없으면 `{ image: data URL }`
-  - 후처리(`app/lib/postprocess.ts`): 단색 배경 보정 → 그라데이션 평탄화 → 흰 배경 제거 → 8% 여백으로 크기 맞춤
+  - 후처리(`app/lib/postprocess.ts`): 단색 배경 보정 → 흰 배경 제거 (그라데이션 평탄화·크기 맞춤은 보류)
 - `GET /api/courses`, `GET /api/courses/{slug}`, `PUT /api/cards` — 코스 목록 / 코스 카드 / 카드 저장
 
 ## 환경 변수 (Vercel에 설정됨)
