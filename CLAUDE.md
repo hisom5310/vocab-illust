@@ -49,7 +49,7 @@ TEUIDA 보캡 일러스트 일괄 생성 웹툴. 단어 목록을 입력하면 O
 - `POST /api/queue` — body `{ course: "ESEN Unit 17", words: [{ id, en, ko, kr?, type }] }` → 카드를 queued로 만들고 `{ url: /generate?course=... }` 반환. 이미 있는 id는 건너뜀
 - `POST /api/generate-image` — body `{ word, type, feedback?, referenceImage?, series?, store?: { course, cardId } }`
   - store 있으면 Blob에 저장하고 `{ imageUrl }`, 없으면 `{ image: data URL }`
-  - 후처리(`app/lib/postprocess.ts`): 단색 배경 보정 → 흰 배경 제거 (그라데이션 평탄화·크기 맞춤은 보류)
+  - 후처리(`app/lib/postprocess.ts`): 모델이 투명 PNG를 주면 그 알파를 쓰고 옅은 번짐(알파 200 이하)만 잘라냄, 불투명이면 단색 배경 보정 → 흰 배경 제거 (그라데이션 평탄화·크기 맞춤은 보류)
 - `GET /api/courses`, `GET /api/courses/{slug}`, `PUT /api/cards` — 코스 목록 / 코스 카드 / 카드 저장
 
 ## 환경 변수 (Vercel에 설정됨)
