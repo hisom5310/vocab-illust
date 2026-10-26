@@ -27,6 +27,7 @@ const STYLE_BASE = `STRICT STYLE RULES (never break these):
 - Use the level-300 color as main, level-500 for shadow/depth. Max 4 colors for Type A, max 5 for others.
 - Object fills the canvas 55–70%. Even white space on all sides.
 - Silhouette alone must convey the word — readable in grayscale.
+- CRITICAL — KEEP IT SIMPLE: use the FEWEST elements that still convey the word. One main subject plus at most 1–2 supporting items in total. Do not fill the scene with extra food, dishes, cups, bottles, plants, or decorations. Target look: a single sticker-like icon — one bold, chunky object centered on empty space, with at most 1–2 tiny accents (sparkle, heart, crack, small chip) only when they add meaning. Example: picnic → one picnic basket, NOT a blanket covered with many dishes. Only add more elements when the revision instructions explicitly name them.
 - CRITICAL — NO TEXT ANYWHERE: never render the vocabulary word itself, its translation, or any caption, title, or label as letters in the image. No writing on signs, books, screens, documents, passports, packaging, banners, or storefronts. The illustration must carry the meaning through shape alone.
   • Where a real-world object would carry writing (a sign, a book cover, an ID card, a document), draw the text as plain rounded-rectangle placeholder bars in a darker level of the surrounding fill — first bar longest, each following bar shorter — never as readable characters.
   • The ONLY exceptions: a number that IS the word (100, 1K, a date on a calendar), and a universally understood symbol (%, +, !, arrow). Nothing else, and never longer than 5 characters.
@@ -186,7 +187,7 @@ const TYPE_PROMPTS: Record<string, string> = {
 TYPE A — Simple icon illustration for vocabulary flashcard. Word: "{WORD}".
 Composition: One clear representative object centered, filling 55–70% of canvas.
 Decorative elements rule — judge by word type:
-  • Add 2–3 small semantic elements ONLY if they reinforce the word's identity. Place at diagonal positions, not grid-aligned. Examples: party→confetti+stars, music→notes, fire→sparks, rain→droplets, love→hearts.
+  • Add 1–2 small semantic elements ONLY if they reinforce the word's identity. Place at diagonal positions, not grid-aligned. Examples: party→confetti+stars, music→notes, fire→sparks, rain→droplets, love→hearts.
   • OMIT all decorative elements if the object is self-explanatory on its own. Examples: clothing (T-shirt, dress, pants), food items, furniture, tools, color swatches — the silhouette alone is enough.
 Choose the most instantly recognizable form of "{WORD}". Simplify to essential shapes only — remove all surface texture, patterns, and unnecessary details.
 CRITICAL for round/spherical objects (balls, fruit, wheels, dials, etc.): render as a FLAT filled circle with panel/segment lines only — absolutely NO shading, NO highlight ellipse, NO rim light, NO gradient to suggest volume or roundness. A ball must look like a flat colored disc, not a sphere.`,
@@ -226,7 +227,7 @@ Pick whichever gesture best matches "{WORD}". Use the expression table above for
 
 CATEGORY (c) GROUP/SCENE:
 Composition: 3+ half-body figures (or 2 figures plus a shared prop) arranged around one shared prop — a table, screen, or podium — that anchors the scene. Front-row figure(s) at 100% scale, back row at 85% for depth.
-Prop: one simple flat solid-color shape sized to visually anchor the group (e.g. a table spanning the lower third of the composition).
+Prop: one simple flat solid-color shape sized to visually anchor the group (e.g. a table spanning the lower third of the composition). At most 1–2 simple items on or around it — never a crowded spread of dishes or objects.
 Use the expression table above for all figures — default to Neutral or Happy/pleased unless "{WORD}" implies a specific mood.
 
 All categories — hands/arms: no individual fingers ever, always simple rounded blob or mitten shapes, or keep arms out of frame. Add 1–2 supporting marks if "{WORD}" needs them beyond the expression accent — speech bubble = rounded rectangle with 3 short white lines inside; stars = simple filled star shapes; exclamation = "!" shape. All marks flat, filled, palette-colored, placed beside the figures, never as text.`,
@@ -234,7 +235,7 @@ All categories — hands/arms: no individual fingers ever, always simple rounded
   D: `${STYLE_BASE}
 
 TYPE D — Nature/season illustration for vocabulary flashcard. Word: "{WORD}".
-Composition: 3–5 related nature elements freely scattered across the canvas. No grid alignment — use diagonal/triangular layout. Elements vary in size (largest 2× smallest). Some overlap for depth. Rotate some elements for variety. Choose colors that naturally represent "{WORD}" (e.g., spring→pink+green, ocean→blue+teal).`,
+Composition: 2–3 related nature elements freely scattered across the canvas. No grid alignment — use diagonal/triangular layout. Elements vary in size (largest 2× smallest). Some overlap for depth. Rotate some elements for variety. Choose colors that naturally represent "{WORD}" (e.g., spring→pink+green, ocean→blue+teal).`,
 }
 
 function loadStyleRef(type: string): File {
@@ -276,7 +277,7 @@ export async function POST(request: Request) {
     ? `MANDATORY REVISION INSTRUCTIONS — HIGHEST PRIORITY. These override ANY conflicting rule in the composition spec below, including required human figures, characters, speech bubbles, or text:
 ${feedback}
 
-If the instructions above say not to use people/characters/hands/faces or not to use text/speech bubbles, you MUST omit them entirely, even though the composition spec below requests them — replace with a simple flat icon-only illustration instead. The feedback above always wins over the composition spec.
+If the instructions above say not to use people/characters/hands/faces or not to use text/speech bubbles, you MUST omit them entirely, even though the composition spec below requests them — replace with a simple flat icon-only illustration instead. The feedback above always wins over the composition spec. Add only the elements the feedback names — do not invent further props or decorations beyond them.
 
 ---
 ${typePrompt}`
