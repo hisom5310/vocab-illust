@@ -57,7 +57,17 @@ Change everything else: subject, composition, colors, and all content.
 // Series mode: the reference is an approved card from the same concept group (calendar
 // words, weekdays, numbers…), so the model keeps that frame and changes only the
 // word-specific part.
-const SERIES_REF_PREFIX = `SERIES REFERENCE: The attached image is the approved illustration for another word in the same series.
+// In-place edit of an existing card image: only the change described in the feedback,
+// everything else kept. The full type prompt is deliberately NOT sent — its composition
+// rules make the model redraw the whole scene instead of touching one part.
+const buildInPlaceEditPrompt = (feedback: string) => `IN-PLACE EDIT: The attached image is the current illustration. Edit THIS image — do not redraw it.
+Apply ONLY this change:
+${feedback}
+
+Keep everything else IDENTICAL — same composition, layout, positions, sizes, shapes, colors and level of detail. Nothing that the change above does not mention may move, change color, or be added.
+Keep the same flat solid-fill style: perfectly sharp edges, NO outlines, NO gradients, NO shadows, NO blur, NO glow. Plain white background. No text.`
+
+const SERIES_REF_PREFIX =`SERIES REFERENCE: The attached image is the approved illustration for another word in the same series.
 Keep its frame IDENTICAL — same object, layout, size, position, colors, shading and details.
 Change ONLY the part that has to change to express the word below (for example which cells, item, or region is highlighted). Nothing else moves or changes color.
 
@@ -256,17 +266,21 @@ type Word = { id?: string; en: string; ko: string; type?: string }
 
 export async function POST(request: Request) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  const { word, type = 'A', feedback, referenceImage, series, store } = await request.json() as {
+  const { word, type = 'A', feedback, referenceImage, series, editImage, store } = await request.json() as {
     word: Word
     type?: string
     feedback?: string
     referenceImage?: string // data URL or http(s) URL of an existing card image
     series?: boolean // referenceImage is a same-series card: keep its frame, change only the word-specific part
+    editImage?: string // URL of the card's current image: change only what feedback says, keep the rest
     store?: { course: string; cardId: string } // upload the result to Blob and return its URL
   }
 
   if (!word?.en || !word?.ko) {
     return Response.json({ error: '단어 정보가 없습니다' }, { status: 400 })
+  }
+  if (editImage && !feedback) {
+    return Response.json({ error: '무엇을 바꿀지 코멘트를 입력해주세요' }, { status: 400 })
   }
 
   const basePrompt = type === 'B' ? buildTypeBPrompt(word) : (TYPE_PROMPTS[type] || TYPE_PROMPTS.A)
@@ -288,7 +302,21 @@ ${typePrompt}`
   try {
     let b64: string | null | undefined
 
-    if (referenceImage) {
+    if (editImage && feedback) {
+      const buffer = Buffer.from(await (await fetch(editImage)).arrayBuffer())
+      const file = new File([buffer], 'current.png', { type: 'image/png' })
+      const response = await openai.images.edit({
+        model: 'gpt-image-1.5',
+        image: file,
+        prompt: buildInPlaceEditPrompt(feedback),
+        n: 1,
+        size: '1024x1024',
+        quality: 'medium',
+        output_format: 'png',
+        input_fidelity: 'high',
+      })
+      b64 = response.data?.[0]?.b64_json
+    } else if (referenceImage) {
       // User-supplied reference takes priority (regeneration with specific reference)
       const buffer = referenceImage.startsWith('http')
         ? Buffer.from(await (await fetch(referenceImage)).arrayBuffer())

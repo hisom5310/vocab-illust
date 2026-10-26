@@ -669,7 +669,15 @@ function Lightbox({ card, busy, hasPrev, hasNext, onPrev, onNext, onClose, onUpd
             >
               {busy ? '생성 중…' : card.comment ? '코멘트 반영해서 재생성' : '재생성'}
             </button>
-            <p className="text-xs text-gray-400">재생성해도 이전 버전은 남아요. 이미지 아래 ‹ › 로 되돌릴 수 있어요.</p>
+            <button
+              disabled={busy || !img || !card.comment.trim()}
+              onClick={() => img && onRegenerate({ editImage: img })}
+              title={card.comment.trim() ? '' : '바꿀 내용을 코멘트에 적어주세요'}
+              className="w-full py-2.5 bg-white text-teal-600 border border-teal-400 rounded-lg font-medium hover:bg-teal-50 disabled:opacity-40"
+            >
+              이 버전에서 코멘트 부분만 수정
+            </button>
+            <p className="text-xs text-gray-400">재생성은 새로 그리고, “이 버전에서 수정”은 지금 보는 그림을 유지한 채 코멘트에 적은 것만 바꿔요. 이전 버전은 남아서 ‹ › 로 되돌릴 수 있어요.</p>
           </div>
 
           <div className="flex gap-2 pt-2 border-t border-gray-100">

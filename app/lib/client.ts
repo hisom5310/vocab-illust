@@ -50,6 +50,7 @@ export type GenerateOptions = {
   feedback?: string
   referenceImage?: string
   series?: boolean
+  editImage?: string // edit this exact image in place (change only what feedback says) instead of redrawing
   unitWords?: string[]
 }
 
@@ -66,6 +67,7 @@ export async function generateForCard(card: Card, opts: GenerateOptions = {}): P
         feedback: opts.feedback || undefined,
         referenceImage: opts.referenceImage || undefined,
         series: opts.series || undefined,
+        editImage: opts.editImage || undefined,
         course: card.course,
         unitWords: opts.unitWords,
         store: { course: card.course, cardId: card.id },
