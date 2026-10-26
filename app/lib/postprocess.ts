@@ -183,9 +183,36 @@ async function whitenUniformBackdrop(png: Buffer): Promise<Buffer> {
   return sharp(data, { raw: { width, height, channels } }).png().toBuffer()
 }
 
+// The model sometimes returns an already-transparent PNG (likely because every edit()
+// input — style refs, character templates, card images — is transparent), and in those
+// a soft glow/blur halo around the subject lives in partial alpha. The opaque pipeline
+// below drops alpha, so that halo became a solid dark smear. For such images trust the
+// model's alpha instead: cut the faint halo, keep only solid pixels, light feather.
+const SOFT_LOW = 200
+const SOFT_HIGH = 250
+
+async function cutSoftAlpha(raw: Buffer): Promise<Buffer | null> {
+  const { data, info } = await sharp(raw).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  const n = info.width * info.height
+  let transparent = 0
+  for (let p = 0; p < n; p++) if (data[p * 4 + 3] < 16) transparent++
+  if (transparent < n * 0.05) return null // opaque output — use the white-background path
+
+  for (let p = 0; p < n; p++) {
+    const i = p * 4
+    const a = data[i + 3]
+    if (a >= SOFT_HIGH) data[i + 3] = 255
+    else if (a <= SOFT_LOW) data[i] = data[i + 1] = data[i + 2] = data[i + 3] = 0
+    else data[i + 3] = Math.round(255 * (a - SOFT_LOW) / (SOFT_HIGH - SOFT_LOW))
+  }
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer()
+}
+
 // Raw model output (opaque, white background) → final transparent card image.
 // flattenGradients (./flatten.ts) / fitToCanvas are on hold: with the 2026-10 prompt experiment the
 // results looked over-worked, so quality work is paused and only the backdrop fix stays.
 export async function postprocess(raw: Buffer): Promise<Buffer> {
+  const cut = await cutSoftAlpha(raw)
+  if (cut) return cut
   return removeWhiteBackground(await whitenUniformBackdrop(raw))
 }
