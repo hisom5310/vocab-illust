@@ -188,20 +188,59 @@ async function whitenUniformBackdrop(png: Buffer): Promise<Buffer> {
 // a soft glow/blur halo around the subject lives in partial alpha. The opaque pipeline
 // below drops alpha, so that halo became a solid dark smear. For such images trust the
 // model's alpha instead: cut the faint halo, keep only solid pixels, light feather.
+//
+// But the model also paints some solid colors as translucent black — dark-gray hair
+// (#555555) came back as black at ~alpha 170 and the halo cut erased it (bald
+// characters). A glow is a thin alpha ramp; such a fill is a wide flat plateau. So
+// flat translucent areas are kept: flattened onto white and made opaque.
 const SOFT_LOW = 200
 const SOFT_HIGH = 250
+const PLATEAU_MIN = 60   // alpha range a translucent fill can sit in
+const PLATEAU_R = 8      // a plateau stays flat at least this far in every direction
+const PLATEAU_TOL = 12   // max alpha difference that still counts as flat
+const PLATEAU_GROW = 120 // plateau grows through neighbors at least this opaque
 
 async function cutSoftAlpha(raw: Buffer): Promise<Buffer | null> {
   const { data, info } = await sharp(raw).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-  const n = info.width * info.height
+  const { width, height } = info
+  const n = width * height
   let transparent = 0
   for (let p = 0; p < n; p++) if (data[p * 4 + 3] < 16) transparent++
   if (transparent < n * 0.05) return null // opaque output — use the white-background path
 
+  const alpha = (p: number) => data[p * 4 + 3]
+  const isSoft = (a: number) => a >= PLATEAU_MIN && a < SOFT_HIGH
+  const fill = new Uint8Array(n)
+  const queue: number[] = []
+  const R = PLATEAU_R
+  for (let y = R; y < height - R; y++) {
+    for (let x = R; x < width - R; x++) {
+      const p = y * width + x
+      const a = alpha(p)
+      if (!isSoft(a)) continue
+      let flat = true
+      for (const [dx, dy] of [[R, 0], [-R, 0], [0, R], [0, -R], [R, R], [-R, R], [R, -R], [-R, -R]]) {
+        if (Math.abs(alpha(p + dy * width + dx) - a) > PLATEAU_TOL) { flat = false; break }
+      }
+      if (flat) { fill[p] = 1; queue.push(p) }
+    }
+  }
+  for (let qi = 0; qi < queue.length; qi++) {
+    const p = queue[qi]
+    const x = p % width
+    for (const q of [x > 0 ? p - 1 : -1, x < width - 1 ? p + 1 : -1, p - width, p + width]) {
+      if (q >= 0 && q < n && !fill[q] && alpha(q) >= PLATEAU_GROW && alpha(q) < SOFT_HIGH) { fill[q] = 1; queue.push(q) }
+    }
+  }
+
   for (let p = 0; p < n; p++) {
     const i = p * 4
     const a = data[i + 3]
-    if (a >= SOFT_HIGH) data[i + 3] = 255
+    if (fill[p]) {
+      const t = a / 255
+      for (let c = 0; c < 3; c++) data[i + c] = Math.round(data[i + c] * t + 255 * (1 - t))
+      data[i + 3] = 255
+    } else if (a >= SOFT_HIGH) data[i + 3] = 255
     else if (a <= SOFT_LOW) data[i] = data[i + 1] = data[i + 2] = data[i + 3] = 0
     else data[i + 3] = Math.round(255 * (a - SOFT_LOW) / (SOFT_HIGH - SOFT_LOW))
   }
