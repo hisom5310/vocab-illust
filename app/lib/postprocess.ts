@@ -247,11 +247,67 @@ async function cutSoftAlpha(raw: Buffer): Promise<Buffer | null> {
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer()
 }
 
+// The cut edge often carries a 1–2px band darker than the fill (the model's own
+// anti-aliasing against a gray-ish backdrop, or a faint outline) and is a hard 0/255
+// step — together it reads as a rough cut-out. Repaint the edge band with the nearest
+// clean interior color and soften the outermost pixel.
+const FRINGE = 2       // edge band depth that gets repainted
+const FRINGE_SEARCH = 4 // how far inward to look for a clean interior pixel
+const EDGE_ALPHA = 0.55 // alpha factor for the outermost pixel
+
+async function defringe(png: Buffer): Promise<Buffer> {
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  const { width, height } = info
+  const n = width * height
+  const solid = (p: number) => data[p * 4 + 3] >= 16
+
+  // depth[p] = 1 for solid pixels touching transparency, 2 for the next ring, 0 otherwise
+  const depth = new Uint8Array(n)
+  const nb = (p: number) => {
+    const x = p % width
+    return [x > 0 ? p - 1 : -1, x < width - 1 ? p + 1 : -1, p >= width ? p - width : -1, p < n - width ? p + width : -1]
+  }
+  for (let p = 0; p < n; p++) {
+    if (solid(p) && nb(p).some(q => q < 0 || !solid(q))) depth[p] = 1
+  }
+  for (let d = 2; d <= FRINGE; d++) {
+    for (let p = 0; p < n; p++) {
+      if (solid(p) && !depth[p] && nb(p).some(q => q >= 0 && depth[q] === d - 1)) depth[p] = d
+    }
+  }
+
+  const out = Buffer.from(data)
+  const S = FRINGE_SEARCH
+  for (let p = 0; p < n; p++) {
+    if (!depth[p]) continue
+    const x = p % width
+    const y = (p - x) / width
+    let best = -1, bestD = Infinity
+    for (let dy = -S; dy <= S; dy++) {
+      const ny = y + dy
+      if (ny < 0 || ny >= height) continue
+      for (let dx = -S; dx <= S; dx++) {
+        const nx = x + dx
+        if (nx < 0 || nx >= width) continue
+        const q = ny * width + nx
+        if (!solid(q) || depth[q]) continue
+        const dd = dx * dx + dy * dy
+        if (dd < bestD) { bestD = dd; best = q }
+      }
+    }
+    if (best < 0) continue // thin detail with no interior — leave it
+    const i = p * 4, j = best * 4
+    out[i] = data[j]; out[i + 1] = data[j + 1]; out[i + 2] = data[j + 2]
+    if (depth[p] === 1) out[i + 3] = Math.round(data[i + 3] * EDGE_ALPHA)
+  }
+  return sharp(out, { raw: { width, height, channels: 4 } }).png().toBuffer()
+}
+
 // Raw model output (opaque, white background) → final transparent card image.
 // flattenGradients (./flatten.ts) / fitToCanvas are on hold: with the 2026-10 prompt experiment the
 // results looked over-worked, so quality work is paused and only the backdrop fix stays.
 export async function postprocess(raw: Buffer): Promise<Buffer> {
   const cut = await cutSoftAlpha(raw)
-  if (cut) return cut
-  return removeWhiteBackground(await whitenUniformBackdrop(raw))
+  if (cut) return defringe(cut)
+  return defringe(await removeWhiteBackground(await whitenUniformBackdrop(raw)))
 }
