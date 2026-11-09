@@ -92,9 +92,11 @@ const CHARACTER_TEMPLATES: Record<string, string> = {
 
 // Adult templates that a word with no specific family-role keyword should be
 // split across at random (deterministically, by word id/text) for variety.
+// 'adult-female' is left out: it wears a graduation cap, and the model kept the
+// cap's flat outline as boxy hair (and sometimes kept the cap itself).
 const ADULT_FALLBACK_KEYS = [
   'adult-male', 'adult-male-2', 'adult-male-3', 'adult-male-4',
-  'adult-female', 'adult-female-2', 'adult-female-3',
+  'adult-female-2', 'adult-female-3',
 ]
 
 // Keyword → demographic template. Covers family-role words across the base
@@ -104,7 +106,7 @@ const FAMILY_KEYWORDS: Record<string, string[]> = {
   'elderly-male': ['할아버지', 'grandfather', 'grandpa', 'abuelo', 'grand-père', 'grandpère'],
   'elderly-female': ['할머니', 'grandmother', 'grandma', 'abuela', 'grand-mère', 'grandmère'],
   'adult-male': ['아빠', '아버지', 'father', 'dad', 'padre', 'père'],
-  'adult-female': ['엄마', '어머니', 'mother', 'mom', 'madre', 'mère'],
+  'adult-female-3': ['엄마', '어머니', 'mother', 'mom', 'madre', 'mère'],
   'adult-male-3': ['애인', '연인', 'lover', 'sweetheart', 'boyfriend'],
   'adult-female-2': ['누나', '언니', 'older sister'],
   'child-male': ['아들', '남동생', '손자', 'son', 'little brother', 'niño', 'fils'],
@@ -188,6 +190,8 @@ CRITICAL — NO OUTLINES ANYWHERE: no dark contour line around the head, body, h
 CRITICAL — NO EXTRA LINES ON CLOTHING: any new clothing (coat, uniform, etc.) must be a single flat solid color shape with no fold lines, no lapel lines, no stitching lines, no internal strokes of any kind — flat fill only, same rule as the reference top.
 You MAY change: the eyes, eyebrows, and mouth TOGETHER as one unit (to match the required expression below — never change only one of the three, they must match the same mood), the shirt/top color, and add a pose, props, or symbolic elements as instructed below — but keep the face shape, hair, and overall head/shoulder framing identical to the reference.
 Do not redraw the face from scratch — edit around the fixed reference, do not shrink or omit the hair.
+CRITICAL — TEMPLATE PROPS ARE NOT PART OF THE CHARACTER: the template was cut from another word's illustration, so it may carry leftovers of that word — a hat or cap (graduation cap, nurse cap), glasses, jewelry, tie, outfit details, held objects (book, microphone, trophy, boxes, laptop, cup), weather, sweat drops, speech bubbles or text. Remove ALL of them unless the word below itself needs them. Keep only the face, the hair, and a plain top.
+Where the template wears a hat or cap, the hair underneath must be drawn as natural hair: a smooth rounded dome on top of the head with soft bangs — never a flat top, square corners, or a straight horizontal edge left by the removed hat.
 
 `
 
