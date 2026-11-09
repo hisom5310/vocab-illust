@@ -262,7 +262,18 @@ function loadCharacterTemplate(key: string): File {
   return new File([buf], refName, { type: 'image/png' })
 }
 
-type Word = { id?: string; en: string; ko: string; type?: string }
+type Word = { id?: string; en: string; ko: string; kr?: string; type?: string }
+
+// `en` is the study-language word (Spanish, French, Korean…), not necessarily English.
+// Without its meaning the model guesses from spelling — "estuve" (I was) came out as a
+// graduate in a cap, read as "estudiante". Always state what the word means.
+function meaningLine(word: Word): string {
+  const glosses = [word.ko, word.kr].filter(g => g && g.trim() && g.trim() !== word.en.trim())
+  if (!glosses.length) return ''
+  return `WORD MEANING (highest priority): "${word.en}" means "${glosses.join('" / "')}". Illustrate exactly this meaning. Never infer the meaning from how "${word.en}" is spelled or sounds, and do not add school, graduation, or job elements (caps, gowns, uniforms) unless this meaning itself is about them.
+
+`
+}
 
 export async function POST(request: Request) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -284,7 +295,7 @@ export async function POST(request: Request) {
   }
 
   const basePrompt = type === 'B' ? buildTypeBPrompt(word) : (TYPE_PROMPTS[type] || TYPE_PROMPTS.A)
-  const typePrompt = basePrompt
+  const typePrompt = meaningLine(word) + basePrompt
     .replace(/\{WORD\}/g, word.en)
 
   const prompt = feedback
