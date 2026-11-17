@@ -7,6 +7,8 @@ import type { Card, CardStatus, CourseSummary } from './types'
 // Layout:
 //   v2/cards/{courseSlug}/{cardKey}/{timestamp}-{status}.json   card state snapshots
 //   v2/images/{courseSlug}/{cardKey}/{timestamp}.png             every generated image
+//   v2/raw/{courseSlug}/{cardKey}/{timestamp}.png                model output before postprocess
+//                                                                 (same timestamp — for debugging the cutout)
 //
 // Each save writes a NEW snapshot file and then deletes the older ones. Blob URLs are
 // CDN-cached for a long time, so overwriting one pathname could serve stale state;
@@ -15,6 +17,7 @@ import type { Card, CardStatus, CourseSummary } from './types'
 
 const CARDS = 'v2/cards/'
 const IMAGES = 'v2/images/'
+const RAW = 'v2/raw/'
 
 const encode = (s: string) => Buffer.from(s, 'utf8').toString('base64url')
 const decode = (s: string) => Buffer.from(s, 'base64url').toString('utf8')
@@ -121,12 +124,15 @@ export async function saveCard(card: Card): Promise<Card> {
   return saved
 }
 
-export async function putImage(course: string, cardId: string, png: Buffer): Promise<string> {
-  const { url } = await put(`${IMAGES}${courseSlug(course)}/${encode(cardId)}/${stamp()}.png`, png, {
-    access: 'public',
-    contentType: 'image/png',
-    addRandomSuffix: false,
-  })
+export async function putImage(course: string, cardId: string, png: Buffer, raw?: Buffer): Promise<string> {
+  const name = `${courseSlug(course)}/${encode(cardId)}/${stamp()}.png`
+  const opts = { access: 'public', contentType: 'image/png', addRandomSuffix: false } as const
+  const [{ url }] = await Promise.all([
+    put(`${IMAGES}${name}`, png, opts),
+    // Raw model output kept beside the final so postprocess bugs (e.g. hair cut away)
+    // can be diagnosed and re-run without paying for a new generation.
+    raw ? put(`${RAW}${name}`, raw, opts).catch(err => console.error('raw image save failed:', err)) : null,
+  ])
   return url
 }
 

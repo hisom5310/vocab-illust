@@ -414,11 +414,12 @@ ${typePrompt}`
     }
 
     if (!b64) throw new Error('이미지 생성 실패')
-    const finalBuffer = await postprocess(Buffer.from(b64, 'base64'))
+    const rawBuffer = Buffer.from(b64, 'base64')
+    const finalBuffer = await postprocess(rawBuffer)
     if (store) {
       // Stored straight to Blob so the image is safe even if the browser tab closes,
       // and the response stays small (a data URL is ~1.5MB).
-      const imageUrl = await putImage(store.course, store.cardId, finalBuffer)
+      const imageUrl = await putImage(store.course, store.cardId, finalBuffer, rawBuffer)
       return Response.json({ imageUrl })
     }
     return Response.json({ image: `data:image/png;base64,${finalBuffer.toString('base64')}` })
