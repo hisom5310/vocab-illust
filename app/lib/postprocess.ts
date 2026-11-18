@@ -189,16 +189,22 @@ async function whitenUniformBackdrop(png: Buffer): Promise<Buffer> {
 // below drops alpha, so that halo became a solid dark smear. For such images trust the
 // model's alpha instead: cut the faint halo, keep only solid pixels, light feather.
 //
-// But the model also paints some solid colors as translucent black — dark-gray hair
-// (#555555) came back as black at ~alpha 170 and the halo cut erased it (bald
-// characters). A glow is a thin alpha ramp; such a fill is a wide flat plateau. So
-// flat translucent areas are kept: flattened onto white and made opaque.
+// But the model also paints some solid fills translucent, and the halo cut erased
+// them (bald characters). Two forms seen for dark-gray hair (#555555):
+//   - black at ~alpha 170 — the color only appears once composited onto white;
+//   - the right gray (~#505050) at ~alpha 110 — the color is already correct.
+// A glow is a thin alpha ramp; such a fill is a wide flat plateau. So flat translucent
+// areas are kept and made opaque: near-black ones flattened onto white, the rest keep
+// their own color (flattening those turned dark hair light gray).
 const SOFT_LOW = 200
 const SOFT_HIGH = 250
 const PLATEAU_MIN = 60   // alpha range a translucent fill can sit in
 const PLATEAU_R = 8      // a plateau stays flat at least this far in every direction
 const PLATEAU_TOL = 12   // max alpha difference that still counts as flat
-const PLATEAU_GROW = 120 // plateau grows through neighbors at least this opaque
+const PLATEAU_GROW = 30  // plateau grows through neighbors at most this much less opaque than its seed
+const PREMUL_BLACK = 40  // a fill darker than this is black-over-white, not its real color
+const SEAM_MIN = 16      // seam pixels this faint or more get closed when boxed in
+const SEAM_PASSES = 3    // seams up to ~2× this wide get closed
 
 async function cutSoftAlpha(raw: Buffer): Promise<Buffer | null> {
   const { data, info } = await sharp(raw).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
@@ -211,6 +217,7 @@ async function cutSoftAlpha(raw: Buffer): Promise<Buffer | null> {
   const alpha = (p: number) => data[p * 4 + 3]
   const isSoft = (a: number) => a >= PLATEAU_MIN && a < SOFT_HIGH
   const fill = new Uint8Array(n)
+  const seedA = new Uint8Array(n)
   const queue: number[] = []
   const R = PLATEAU_R
   for (let y = R; y < height - R; y++) {
@@ -222,23 +229,47 @@ async function cutSoftAlpha(raw: Buffer): Promise<Buffer | null> {
       for (const [dx, dy] of [[R, 0], [-R, 0], [0, R], [0, -R], [R, R], [-R, R], [R, -R], [-R, -R]]) {
         if (Math.abs(alpha(p + dy * width + dx) - a) > PLATEAU_TOL) { flat = false; break }
       }
-      if (flat) { fill[p] = 1; queue.push(p) }
+      if (flat) { fill[p] = 1; seedA[p] = a; queue.push(p) }
     }
   }
+  // Grow to the plateau's own edge: neighbors about as opaque as the seed it came from
+  // (a fixed floor cut ~alpha-110 hair off at its rim, leaving a ragged edge), while
+  // a glow's falling ramp stops the growth.
   for (let qi = 0; qi < queue.length; qi++) {
     const p = queue[qi]
     const x = p % width
     for (const q of [x > 0 ? p - 1 : -1, x < width - 1 ? p + 1 : -1, p - width, p + width]) {
-      if (q >= 0 && q < n && !fill[q] && alpha(q) >= PLATEAU_GROW && alpha(q) < SOFT_HIGH) { fill[q] = 1; queue.push(q) }
+      if (q >= 0 && q < n && !fill[q] && alpha(q) >= seedA[p] - PLATEAU_GROW && alpha(q) < SOFT_HIGH) {
+        fill[q] = 1; seedA[q] = seedA[p]; queue.push(q)
+      }
     }
+  }
+  // Where a translucent fill meets an opaque one (hair over forehead) the model's
+  // anti-aliasing dips the alpha for a pixel or two — left alone, that thin line is
+  // cut away and shows as a gap. Close it: a soft pixel boxed in by kept pixels on
+  // opposite sides is part of the fill, not an outer edge.
+  const kept = (q: number) => fill[q] === 1 || alpha(q) >= SOFT_HIGH
+  for (let pass = 0; pass < SEAM_PASSES; pass++) {
+    const add: number[] = []
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const p = y * width + x
+        if (fill[p] || alpha(p) < SEAM_MIN || alpha(p) >= SOFT_HIGH) continue
+        if ((kept(p - 1) && kept(p + 1)) || (kept(p - width) && kept(p + width))) add.push(p)
+      }
+    }
+    if (!add.length) break
+    for (const p of add) fill[p] = 1
   }
 
   for (let p = 0; p < n; p++) {
     const i = p * 4
     const a = data[i + 3]
     if (fill[p]) {
-      const t = a / 255
-      for (let c = 0; c < 3; c++) data[i + c] = Math.round(data[i + c] * t + 255 * (1 - t))
+      if (Math.max(data[i], data[i + 1], data[i + 2]) < PREMUL_BLACK) {
+        const t = a / 255
+        for (let c = 0; c < 3; c++) data[i + c] = Math.round(data[i + c] * t + 255 * (1 - t))
+      }
       data[i + 3] = 255
     } else if (a >= SOFT_HIGH) data[i + 3] = 255
     else if (a <= SOFT_LOW) data[i] = data[i + 1] = data[i + 2] = data[i + 3] = 0
