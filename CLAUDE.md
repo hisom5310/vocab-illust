@@ -60,3 +60,4 @@ TEUIDA 보캡 일러스트 일괄 생성 웹툴. 단어 목록을 입력하면 O
 
 - 프리뷰 배포도 같은 Blob 저장소를 씀 → 프리뷰에서 테스트하면 실제 데이터에 반영됨
 - 투명 배경: gpt-image-1.5는 `images.generate()`·`images.edit()` 둘 다 `background: 'transparent'` + `output_format: 'png'`를 함께 넘겨야 실제 알파 투명이 적용됨 (하나만 넘기면 opaque로 나오거나 alpha=0 전체로 깨짐).
+- 인물 템플릿(Type B/C)은 흰 배경으로 채워서 `images.edit()`에 보낸다. 투명 PNG로 보내면 모델도 투명 PNG로 답하면서 진회색 머리를 반투명~투명으로 그려 머리가 바래거나 사라짐 (2026-11 ESEN 19). 후처리 전 원본은 `v2/raw/`에 같은 timestamp로 저장됨.

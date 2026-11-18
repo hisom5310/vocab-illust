@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import fs from 'fs'
 import path from 'path'
+import sharp from 'sharp'
 import { postprocess } from '../../lib/postprocess'
 import { putImage } from '../../lib/blobStore'
 
@@ -259,11 +260,16 @@ function loadStyleRef(type: string): File {
   return new File([buf], refName, { type: 'image/png' })
 }
 
-function loadCharacterTemplate(key: string): File {
+// The template is sent flattened onto white. As a transparent PNG (whose empty pixels
+// are stored as black) the model answered with a transparent PNG too, and painted the
+// dark-gray hair at low or near-zero alpha — mixing it up with the transparent black
+// around it — so the hair faded or vanished (ESEN 19 감기, alpha 0–50). On white it
+// returns an opaque image and postprocess strips the white background instead.
+async function loadCharacterTemplate(key: string): Promise<File> {
   const refName = CHARACTER_TEMPLATES[key]
   const refPath = path.join(process.cwd(), 'public', 'reference', 'character', refName)
-  const buf = fs.readFileSync(refPath)
-  return new File([buf], refName, { type: 'image/png' })
+  const buf = await sharp(fs.readFileSync(refPath)).flatten({ background: '#ffffff' }).png().toBuffer()
+  return new File([new Uint8Array(buf)], refName, { type: 'image/png' })
 }
 
 type Word = { id?: string; en: string; ko: string; kr?: string; type?: string }
@@ -355,7 +361,7 @@ ${typePrompt}`
       // at the default it redraws the person (new hair, fingers, outlined clothes).
       try {
         const templateKey = pickCharacterTemplate(word)
-        const file = loadCharacterTemplate(templateKey)
+        const file = await loadCharacterTemplate(templateKey)
         const response = await openai.images.edit({
           model: 'gpt-image-1.5',
           image: file,
